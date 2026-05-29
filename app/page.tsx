@@ -44,6 +44,7 @@ type ResultItem = CargoItem & {
   cbm: number;
   totalWeight: number;
   placement: string;
+  stackLayers: number;
 };
 
 export default function Home() {
@@ -64,6 +65,8 @@ export default function Home() {
   ]);
   const [page, setPage] = useState<'input' | 'result'>('input');
   const [results, setResults] = useState<ResultItem[]>([]);
+  const [hoveredId, setHoveredId] = useState<number | null>(null);
+  const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
 
   const addCargo = () => {
     setCargos([
@@ -95,11 +98,10 @@ export default function Home() {
   const totalWeight = cargos.reduce((sum, c) => sum + c.weight * c.quantity, 0);
   const loadRate = ((totalCbm / selectedContainer.maxCbm) * 100).toFixed(1);
 
-  // 계산하기
   const calculate = () => {
     const sorted = [...cargos].sort((a, b) => {
-      if (a.noStack !== b.noStack) return a.noStack ? -1 : 1; // 다단불가 먼저
-      return b.weight - a.weight; // 무거운 것 먼저
+      if (a.noStack !== b.noStack) return a.noStack ? -1 : 1;
+      return b.weight - a.weight;
     });
 
     const resultItems: ResultItem[] = sorted.map((c) => ({
@@ -107,10 +109,163 @@ export default function Home() {
       cbm: calcCbm(c),
       totalWeight: c.weight * c.quantity,
       placement: c.noStack ? '바닥 1단 (다단 불가)' : '다단 적재 가능',
+      stackLayers: c.noStack ? 1 : 2,
     }));
 
     setResults(resultItems);
     setPage('result');
+  };
+
+  // 툴팁 - 정면 스택 뷰
+  const StackTooltip = ({ cargo }: { cargo: ResultItem }) => {
+    const colors = [
+      '#4f8ef7',
+      '#38a169',
+      '#e07b30',
+      '#6a5acd',
+      '#e04040',
+      '#0891b2',
+    ];
+    const idx = results.findIndex((r) => r.id === cargo.id);
+    const color = colors[idx % colors.length];
+    const layers = cargo.stackLayers;
+    const boxH = 54;
+    const boxW = 100;
+
+    return (
+      <div
+        style={{
+          position: 'fixed',
+          left: tooltipPos.x + 16,
+          top: tooltipPos.y - 20,
+          background: 'white',
+          border: '2px solid #4f8ef7',
+          borderRadius: 12,
+          padding: 16,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
+          zIndex: 1000,
+          minWidth: 180,
+          pointerEvents: 'none',
+        }}
+      >
+        <div
+          style={{
+            fontSize: 12,
+            fontWeight: 700,
+            color: '#4f8ef7',
+            marginBottom: 10,
+          }}
+        >
+          📦 정면 스택 뷰
+        </div>
+        <div
+          style={{
+            fontSize: 12,
+            fontWeight: 600,
+            color: '#333',
+            marginBottom: 8,
+          }}
+        >
+          {cargo.name || '(미입력)'} × {cargo.quantity}박스
+        </div>
+
+        {/* 정면 스택 시각화 */}
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column-reverse',
+            gap: 3,
+            alignItems: 'center',
+            marginBottom: 10,
+          }}
+        >
+          {Array.from({ length: layers }).map((_, i) => (
+            <div
+              key={i}
+              style={{
+                width: boxW,
+                height: boxH,
+                background: i === 0 ? color : `${color}99`,
+                borderRadius: 6,
+                border: `2px solid ${color}`,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: 'white',
+                fontSize: 10,
+                fontWeight: 700,
+                position: 'relative',
+              }}
+            >
+              {i === 0 && cargo.noStack && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: 3,
+                    right: 4,
+                    background: '#fff0f0',
+                    color: '#e04040',
+                    fontSize: 8,
+                    padding: '1px 4px',
+                    borderRadius: 3,
+                    fontWeight: 800,
+                  }}
+                >
+                  NO STACK
+                </div>
+              )}
+              <div>{i + 1}단</div>
+              <div style={{ fontSize: 9, opacity: 0.85 }}>
+                {cargo.height}cm / {cargo.weight}kg
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* 바닥 표시 */}
+        <div
+          style={{
+            width: boxW + 20,
+            height: 8,
+            background: '#aaa',
+            borderRadius: 4,
+            margin: '0 auto',
+          }}
+        />
+        <div
+          style={{
+            fontSize: 10,
+            color: '#aaa',
+            textAlign: 'center',
+            marginTop: 4,
+          }}
+        >
+          컨테이너 바닥
+        </div>
+
+        {/* 정보 */}
+        <div
+          style={{
+            marginTop: 10,
+            fontSize: 11,
+            color: '#666',
+            borderTop: '1px solid #eee',
+            paddingTop: 8,
+          }}
+        >
+          <div>
+            총 높이: <strong>{cargo.height * layers}cm</strong>
+          </div>
+          <div>
+            적재 방식:{' '}
+            <strong style={{ color: cargo.noStack ? '#e04040' : '#38a169' }}>
+              {cargo.placement}
+            </strong>
+          </div>
+        </div>
+      </div>
+    );
   };
 
   if (page === 'result') {
@@ -119,6 +274,15 @@ export default function Home() {
       (totalWeight / selectedContainer.maxWeight) *
       100
     ).toFixed(1);
+    const colors = [
+      '#4f8ef7',
+      '#38a169',
+      '#e07b30',
+      '#6a5acd',
+      '#e04040',
+      '#0891b2',
+    ];
+    const hoveredCargo = results.find((r) => r.id === hoveredId);
 
     return (
       <main
@@ -211,12 +375,16 @@ export default function Home() {
               fontSize: 13,
               fontWeight: 700,
               color: '#555',
-              marginBottom: 12,
+              marginBottom: 4,
               textTransform: 'uppercase',
             }}
           >
             2D 배치도 (상면도)
           </div>
+          <div style={{ fontSize: 11, color: '#aaa', marginBottom: 12 }}>
+            💡 화물 위에 마우스를 올리면 정면 스택 뷰가 나타납니다
+          </div>
+
           <div
             style={{
               background: '#eef4ff',
@@ -243,21 +411,24 @@ export default function Home() {
             >
               {selectedContainer.name}
             </div>
+
             {results.map((c, i) => {
-              const colors = [
-                '#4f8ef7',
-                '#38a169',
-                '#e07b30',
-                '#6a5acd',
-                '#e04040',
-                '#0891b2',
-              ];
               const color = colors[i % colors.length];
               const widthPx = Math.max(60, Math.min(160, c.cbm * 12));
               const heightPx = c.noStack ? 70 : 110;
+              const isHovered = hoveredId === c.id;
+
               return (
                 <div
                   key={c.id}
+                  onMouseEnter={(e) => {
+                    setHoveredId(c.id);
+                    setTooltipPos({ x: e.clientX, y: e.clientY });
+                  }}
+                  onMouseMove={(e) =>
+                    setTooltipPos({ x: e.clientX, y: e.clientY })
+                  }
+                  onMouseLeave={() => setHoveredId(null)}
                   style={{
                     background: color,
                     borderRadius: 6,
@@ -273,6 +444,11 @@ export default function Home() {
                     textAlign: 'center',
                     padding: 4,
                     position: 'relative',
+                    cursor: 'pointer',
+                    transform: isHovered ? 'scale(1.05)' : 'scale(1)',
+                    boxShadow: isHovered ? `0 4px 16px ${color}88` : 'none',
+                    transition: 'all 0.15s ease',
+                    zIndex: isHovered ? 10 : 1,
                   }}
                 >
                   {c.noStack && (
@@ -299,6 +475,7 @@ export default function Home() {
                 </div>
               );
             })}
+
             {totalCbm < selectedContainer.maxCbm && (
               <div
                 style={{
@@ -318,6 +495,8 @@ export default function Home() {
               </div>
             )}
           </div>
+
+          {/* 범례 */}
           <div
             style={{
               display: 'flex',
@@ -326,38 +505,28 @@ export default function Home() {
               flexWrap: 'wrap',
             }}
           >
-            {results.map((c, i) => {
-              const colors = [
-                '#4f8ef7',
-                '#38a169',
-                '#e07b30',
-                '#6a5acd',
-                '#e04040',
-                '#0891b2',
-              ];
-              return (
+            {results.map((c, i) => (
+              <div
+                key={c.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  fontSize: 12,
+                  color: '#555',
+                }}
+              >
                 <div
-                  key={c.id}
                   style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    fontSize: 12,
-                    color: '#555',
+                    width: 14,
+                    height: 14,
+                    borderRadius: 3,
+                    background: colors[i % colors.length],
                   }}
-                >
-                  <div
-                    style={{
-                      width: 14,
-                      height: 14,
-                      borderRadius: 3,
-                      background: colors[i % colors.length],
-                    }}
-                  />
-                  {c.name || `화물 ${i + 1}`}
-                </div>
-              );
-            })}
+                />
+                {c.name || `화물 ${i + 1}`}
+              </div>
+            ))}
           </div>
         </div>
 
@@ -466,7 +635,6 @@ export default function Home() {
           </div>
         </div>
 
-        {/* 버튼 */}
         <div style={{ display: 'flex', gap: 12 }}>
           <button
             onClick={() => setPage('input')}
@@ -499,6 +667,9 @@ export default function Home() {
             📄 PDF 저장 (다음 단계)
           </button>
         </div>
+
+        {/* 툴팁 */}
+        {hoveredCargo && <StackTooltip cargo={hoveredCargo} />}
       </main>
     );
   }

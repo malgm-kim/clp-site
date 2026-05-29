@@ -103,7 +103,6 @@ export default function Home() {
       if (a.noStack !== b.noStack) return a.noStack ? -1 : 1;
       return b.weight - a.weight;
     });
-
     const resultItems: ResultItem[] = sorted.map((c) => ({
       ...c,
       cbm: calcCbm(c),
@@ -111,12 +110,10 @@ export default function Home() {
       placement: c.noStack ? '바닥 1단 (다단 불가)' : '다단 적재 가능',
       stackLayers: c.noStack ? 1 : 2,
     }));
-
     setResults(resultItems);
     setPage('result');
   };
 
-  // 툴팁 - 정면 스택 뷰
   const StackTooltip = ({ cargo }: { cargo: ResultItem }) => {
     const colors = [
       '#4f8ef7',
@@ -126,11 +123,14 @@ export default function Home() {
       '#e04040',
       '#0891b2',
     ];
-    const idx = results.findIndex((r) => r.id === cargo.id);
-    const color = colors[idx % colors.length];
-    const layers = cargo.stackLayers;
+    const boxW = 120;
     const boxH = 54;
-    const boxW = 100;
+    const isNoStack = cargo.noStack;
+    const stackList = isNoStack
+      ? [cargo]
+      : [...results]
+          .filter((r) => !r.noStack)
+          .sort((a, b) => b.weight - a.weight);
 
     return (
       <div
@@ -144,7 +144,7 @@ export default function Home() {
           padding: 16,
           boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
           zIndex: 1000,
-          minWidth: 180,
+          minWidth: 200,
           pointerEvents: 'none',
         }}
       >
@@ -163,72 +163,75 @@ export default function Home() {
             fontSize: 12,
             fontWeight: 600,
             color: '#333',
-            marginBottom: 8,
+            marginBottom: 10,
           }}
         >
           {cargo.name || '(미입력)'} × {cargo.quantity}박스
         </div>
-
-        {/* 정면 스택 시각화 */}
         <div
           style={{
             display: 'flex',
-            flexDirection: 'column-reverse',
+            flexDirection: 'column',
             gap: 3,
             alignItems: 'center',
-            marginBottom: 10,
+            marginBottom: 6,
           }}
         >
-          {Array.from({ length: layers }).map((_, i) => (
-            <div
-              key={i}
-              style={{
-                width: boxW,
-                height: boxH,
-                background: i === 0 ? color : `${color}99`,
-                borderRadius: 6,
-                border: `2px solid ${color}`,
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: 'white',
-                fontSize: 10,
-                fontWeight: 700,
-                position: 'relative',
-              }}
-            >
-              {i === 0 && cargo.noStack && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: 3,
-                    right: 4,
-                    background: '#fff0f0',
-                    color: '#e04040',
-                    fontSize: 8,
-                    padding: '1px 4px',
-                    borderRadius: 3,
-                    fontWeight: 800,
-                  }}
-                >
-                  NO STACK
+          {[...stackList].reverse().map((c, i) => {
+            const cIdx = results.findIndex((r) => r.id === c.id);
+            const cColor = colors[cIdx % colors.length];
+            const isCurrent = c.id === cargo.id;
+            const layerNum = stackList.length - i;
+            return (
+              <div
+                key={c.id}
+                style={{
+                  width: boxW,
+                  height: boxH,
+                  background: isCurrent ? cColor : `${cColor}55`,
+                  border: `2px solid ${isCurrent ? cColor : `${cColor}99`}`,
+                  borderRadius: 6,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: isCurrent ? 'white' : '#555',
+                  fontSize: 10,
+                  fontWeight: 700,
+                  position: 'relative',
+                  boxShadow: isCurrent ? `0 2px 8px ${cColor}66` : 'none',
+                }}
+              >
+                {isNoStack && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: 3,
+                      right: 4,
+                      background: '#fff0f0',
+                      color: '#e04040',
+                      fontSize: 8,
+                      padding: '1px 4px',
+                      borderRadius: 3,
+                      fontWeight: 800,
+                    }}
+                  >
+                    NO STACK
+                  </div>
+                )}
+                <div>{c.name || '화물'}</div>
+                <div style={{ fontSize: 9, opacity: 0.85 }}>
+                  {layerNum}단 · {c.weight}kg
                 </div>
-              )}
-              <div>{i + 1}단</div>
-              <div style={{ fontSize: 9, opacity: 0.85 }}>
-                {cargo.height}cm / {cargo.weight}kg
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
-
-        {/* 바닥 표시 */}
         <div
           style={{
             width: boxW + 20,
             height: 8,
-            background: '#aaa',
+            background: '#888',
             borderRadius: 4,
             margin: '0 auto',
           }}
@@ -243,8 +246,6 @@ export default function Home() {
         >
           컨테이너 바닥
         </div>
-
-        {/* 정보 */}
         <div
           style={{
             marginTop: 10,
@@ -255,14 +256,16 @@ export default function Home() {
           }}
         >
           <div>
-            총 높이: <strong>{cargo.height * layers}cm</strong>
-          </div>
-          <div>
             적재 방식:{' '}
-            <strong style={{ color: cargo.noStack ? '#e04040' : '#38a169' }}>
-              {cargo.placement}
+            <strong style={{ color: isNoStack ? '#e04040' : '#38a169' }}>
+              {isNoStack ? '❌ 바닥 1단 고정' : '✅ 다단 적재'}
             </strong>
           </div>
+          {!isNoStack && (
+            <div style={{ marginTop: 4, color: '#aaa', fontSize: 10 }}>
+              💡 무거운 화물이 아래에 배치됩니다
+            </div>
+          )}
         </div>
       </div>
     );
@@ -300,7 +303,6 @@ export default function Home() {
           {selectedContainer.name} 컨테이너 기준
         </p>
 
-        {/* 요약 카드 */}
         <div
           style={{
             display: 'grid',
@@ -360,7 +362,6 @@ export default function Home() {
           ))}
         </div>
 
-        {/* 2D 배치도 */}
         <div
           style={{
             background: 'white',
@@ -384,7 +385,6 @@ export default function Home() {
           <div style={{ fontSize: 11, color: '#aaa', marginBottom: 12 }}>
             💡 화물 위에 마우스를 올리면 정면 스택 뷰가 나타납니다
           </div>
-
           <div
             style={{
               background: '#eef4ff',
@@ -411,13 +411,11 @@ export default function Home() {
             >
               {selectedContainer.name}
             </div>
-
             {results.map((c, i) => {
               const color = colors[i % colors.length];
               const widthPx = Math.max(60, Math.min(160, c.cbm * 12));
               const heightPx = c.noStack ? 70 : 110;
               const isHovered = hoveredId === c.id;
-
               return (
                 <div
                   key={c.id}
@@ -475,7 +473,6 @@ export default function Home() {
                 </div>
               );
             })}
-
             {totalCbm < selectedContainer.maxCbm && (
               <div
                 style={{
@@ -495,8 +492,6 @@ export default function Home() {
               </div>
             )}
           </div>
-
-          {/* 범례 */}
           <div
             style={{
               display: 'flex',
@@ -530,7 +525,6 @@ export default function Home() {
           </div>
         </div>
 
-        {/* 품목별 결과 테이블 */}
         <div
           style={{
             background: 'white',
@@ -668,7 +662,6 @@ export default function Home() {
           </button>
         </div>
 
-        {/* 툴팁 */}
         {hoveredCargo && <StackTooltip cargo={hoveredCargo} />}
       </main>
     );

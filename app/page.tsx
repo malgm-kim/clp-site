@@ -51,19 +51,19 @@ type PlacedBox = {
   layer: number;
 };
 
-type Column = {
-  colId: number;
+type Cell = {
+  cellId: number;
+  x: number;
+  y: number;
+  cellLength: number;
+  cellWidth: number;
   boxes: PlacedBox[];
   usedHeight: number;
-  colLength: number; // 이 열이 차지하는 길이(cm)
-  colWidth: number; // 이 열이 차지하는 폭(cm)
+  noStack: boolean;
 };
 
-type ContainerLoad = {
-  containerId: number;
-  columns: Column[];
-  usedLength: number;
-};
+type ContainerLoad = { containerId: number; cells: Cell[]; usedLength: number };
+type FreeRect = { x: number; y: number; w: number; h: number };
 
 const COLORS = [
   '#4f8ef7',
@@ -76,43 +76,105 @@ const COLORS = [
   '#7c3aed',
 ];
 
-// 핵심 배치 알고리즘 - 컨테이너 길이/폭/높이 모두 체크
-function buildContainerLoads(
+function calcLoadAbove(boxes: PlacedBox[], layerIdx: number): number {
+  return boxes.slice(layerIdx + 1).reduce((sum, b) => sum + b.weight, 0);
+}
+
+// ✅ 허용하중 = 맨 아래 박스(1단)의 자체 중량
+function canStackOn(cell: Cell, newBox: { weight: number }): boolean {
+  if (cell.boxes.length === 0) return true;
+  const bottomBox = cell.boxes[0]; // 1단 박스
+  const currentLoadAbove = calcLoadAbove(cell.boxes, 0); // 현재 1단 위 하중
+  return currentLoadAbove + newBox.weight <= bottomBox.weight;
+}
+
+function maxRectsBSSF(
+  freeRects: FreeRect[],
+  boxW: number,
+  boxH: number
+): { rect: FreeRect; rotated: boolean } | null {
+  let best: { rect: FreeRect; rotated: boolean; score: number } | null = null;
+  for (const rect of freeRects) {
+    const tryFit = (bw: number, bh: number, rotated: boolean) => {
+      if (bw > rect.w || bh > rect.h) return;
+      const score = Math.min(rect.w - bw, rect.h - bh);
+      if (!best || score < best.score) best = { rect, rotated, score };
+    };
+    tryFit(boxW, boxH, false);
+    if (boxW !== boxH) tryFit(boxH, boxW, true);
+  }
+  return best;
+}
+
+function splitMaxRects(
+  freeRects: FreeRect[],
+  px: number,
+  py: number,
+  pw: number,
+  ph: number
+): FreeRect[] {
+  const result: FreeRect[] = [];
+  for (const rect of freeRects) {
+    if (
+      px >= rect.x + rect.w ||
+      px + pw <= rect.x ||
+      py >= rect.y + rect.h ||
+      py + ph <= rect.y
+    ) {
+      result.push(rect);
+      continue;
+    }
+    if (py > rect.y)
+      result.push({ x: rect.x, y: rect.y, w: rect.w, h: py - rect.y });
+    if (py + ph < rect.y + rect.h)
+      result.push({
+        x: rect.x,
+        y: py + ph,
+        w: rect.w,
+        h: rect.y + rect.h - (py + ph),
+      });
+    if (px > rect.x) result.push({ x: rect.x, y: py, w: px - rect.x, h: ph });
+    if (px + pw < rect.x + rect.w)
+      result.push({ x: px + pw, y: py, w: rect.x + rect.w - (px + pw), h: ph });
+  }
+  return result.filter(
+    (r, i) =>
+      !result.some(
+        (o, j) =>
+          i !== j &&
+          o.x <= r.x &&
+          o.y <= r.y &&
+          o.x + o.w >= r.x + r.w &&
+          o.y + o.h >= r.y + r.h
+      )
+  );
+}
+
+type ActiveContainer = ContainerLoad & { freeRects: FreeRect[] };
+
+function runPacking(
+  allBoxes: CargoItem[],
   cargos: CargoItem[],
-  containerLength: number,
-  containerWidth: number,
-  containerHeight: number
+  cL: number,
+  cW: number,
+  cH: number
 ): ContainerLoad[] {
-  const containerLoads: ContainerLoad[] = [];
-  let containerId = 0;
-  let colId = 0;
-
-  // 현재 컨테이너 생성
-  const newContainer = (): ContainerLoad => ({
+  const loads: ContainerLoad[] = [];
+  let containerId = 0,
+    cellId = 0;
+  const newContainer = (): ActiveContainer => ({
     containerId: containerId++,
-    columns: [],
+    cells: [],
     usedLength: 0,
+    freeRects: [{ x: 0, y: 0, w: cL, h: cW }],
   });
-
-  let currentContainer = newContainer();
-  containerLoads.push(currentContainer);
-
-  // 박스 1개씩 펼치고 정렬
-  const allBoxes = [...cargos]
-    .flatMap((c) => {
-      const arr = [];
-      for (let i = 0; i < c.quantity; i++) arr.push(c);
-      return arr;
-    })
-    .sort((a, b) => {
-      if (a.noStack !== b.noStack) return a.noStack ? -1 : 1;
-      return b.weight - a.weight;
-    });
+  let current = newContainer();
+  loads.push(current);
 
   for (const cargo of allBoxes) {
+    if (cargo.height > cH) continue;
     const colorIdx = cargos.findIndex((c) => c.id === cargo.id);
     const color = COLORS[colorIdx % COLORS.length];
-
     const box: PlacedBox = {
       cargoId: cargo.id,
       cargoName: cargo.name,
@@ -124,24 +186,19 @@ function buildContainerLoads(
       layer: 0,
     };
 
-    // 화물이 컨테이너 폭보다 크면 스킵 (실제론 회전 고려해야 하지만 MVP에선 단순화)
-    const fitsWidth = cargo.width <= containerWidth;
-    const fitsHeight = cargo.height <= containerHeight;
-
-    if (!fitsWidth || !fitsHeight) continue; // 너무 큰 화물은 제외
-
     let placed = false;
 
     if (!cargo.noStack) {
-      // 다단 가능: 기존 열에 쌓기 시도
-      for (const col of currentContainer.columns) {
-        const hasNoStack = col.boxes.some(
-          (b) => cargos.find((c) => c.id === b.cargoId)?.noStack
-        );
-        if (hasNoStack) continue;
-        if (col.usedHeight + cargo.height <= containerHeight) {
-          col.boxes.push({ ...box, layer: col.boxes.length + 1 });
-          col.usedHeight += cargo.height;
+      for (const cell of current.cells) {
+        if (cell.noStack) continue;
+        if (
+          cell.cellLength >= cargo.length &&
+          cell.cellWidth >= cargo.width &&
+          cell.usedHeight + cargo.height <= cH &&
+          canStackOn(cell, box) // ✅ 하중 체크
+        ) {
+          cell.boxes.push({ ...box, layer: cell.boxes.length + 1 });
+          cell.usedHeight += cargo.height;
           placed = true;
           break;
         }
@@ -149,26 +206,110 @@ function buildContainerLoads(
     }
 
     if (!placed) {
-      // 새 열 필요 — 현재 컨테이너에 길이 여유 있는지 확인
-      if (currentContainer.usedLength + cargo.length > containerLength) {
-        // 현재 컨테이너 꽉 참 → 새 컨테이너
-        currentContainer = newContainer();
-        containerLoads.push(currentContainer);
-      }
-
-      const newCol: Column = {
-        colId: colId++,
-        boxes: [{ ...box, layer: 1 }],
-        usedHeight: cargo.height,
-        colLength: cargo.length,
-        colWidth: cargo.width,
+      const tryPlace = (container: ActiveContainer): boolean => {
+        const fit = maxRectsBSSF(
+          container.freeRects,
+          cargo.length,
+          cargo.width
+        );
+        if (!fit) return false;
+        const fl = fit.rotated ? cargo.width : cargo.length;
+        const fw = fit.rotated ? cargo.length : cargo.width;
+        container.cells.push({
+          cellId: cellId++,
+          x: fit.rect.x,
+          y: fit.rect.y,
+          cellLength: fl,
+          cellWidth: fw,
+          boxes: [{ ...box, length: fl, width: fw, layer: 1 }],
+          usedHeight: cargo.height,
+          noStack: cargo.noStack,
+        });
+        container.freeRects = splitMaxRects(
+          container.freeRects,
+          fit.rect.x,
+          fit.rect.y,
+          fl,
+          fw
+        );
+        return true;
       };
-      currentContainer.columns.push(newCol);
-      currentContainer.usedLength += cargo.length;
+      if (!tryPlace(current)) {
+        current = newContainer();
+        loads.push(current);
+        tryPlace(current);
+      }
     }
   }
 
-  return containerLoads;
+  for (const load of loads) {
+    load.usedLength =
+      load.cells.length > 0
+        ? Math.max(...load.cells.map((c) => c.x + c.cellLength))
+        : 0;
+  }
+  return loads;
+}
+
+function buildContainerLoads(
+  cargos: CargoItem[],
+  cL: number,
+  cW: number,
+  cH: number
+): ContainerLoad[] {
+  const baseBoxes = [...cargos].flatMap((c) =>
+    Array.from({ length: c.quantity }, () => ({ ...c }))
+  );
+  const strategies = [
+    (b: CargoItem[]) =>
+      [...b].sort((a, z) => {
+        if (a.noStack !== z.noStack) return a.noStack ? -1 : 1;
+        return Math.max(z.length, z.width) - Math.max(a.length, a.width);
+      }),
+    (b: CargoItem[]) =>
+      [...b].sort((a, z) => {
+        if (a.noStack !== z.noStack) return a.noStack ? -1 : 1;
+        return z.length * z.width * z.height - a.length * a.width * a.height;
+      }),
+    (b: CargoItem[]) =>
+      [...b].sort((a, z) => {
+        if (a.noStack !== z.noStack) return a.noStack ? -1 : 1;
+        return z.length * z.width - a.length * a.width;
+      }),
+    (b: CargoItem[]) =>
+      [...b].sort((a, z) => {
+        if (a.noStack !== z.noStack) return a.noStack ? -1 : 1;
+        return z.weight - a.weight;
+      }),
+  ];
+  let best: ContainerLoad[] | null = null;
+  for (const s of strategies) {
+    const result = runPacking(s(baseBoxes), cargos, cL, cW, cH);
+    if (!best || result.length < best.length) best = result;
+  }
+  return best!;
+}
+
+function calcCenterOfGravity(
+  cells: Cell[],
+  containerLength: number,
+  containerWidth: number
+) {
+  let totalWeight = 0,
+    weightedX = 0,
+    weightedY = 0;
+  for (const cell of cells) {
+    const cellWeight = cell.boxes.reduce((s, b) => s + b.weight, 0);
+    weightedX += (cell.x + cell.cellLength / 2) * cellWeight;
+    weightedY += (cell.y + cell.cellWidth / 2) * cellWeight;
+    totalWeight += cellWeight;
+  }
+  if (totalWeight === 0) return { x: 0.5, y: 0.5, totalWeight: 0 };
+  return {
+    x: weightedX / totalWeight / containerLength,
+    y: weightedY / totalWeight / containerWidth,
+    totalWeight,
+  };
 }
 
 export default function Home() {
@@ -189,7 +330,7 @@ export default function Home() {
   ]);
   const [page, setPage] = useState<'input' | 'result'>('input');
   const [containerLoads, setContainerLoads] = useState<ContainerLoad[]>([]);
-  const [hoveredCol, setHoveredCol] = useState<Column | null>(null);
+  const [hoveredCell, setHoveredCell] = useState<Cell | null>(null);
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
 
   const addCargo = () =>
@@ -206,16 +347,12 @@ export default function Home() {
         noStack: false,
       },
     ]);
-
   const removeCargo = (id: number) =>
     setCargos(cargos.filter((c) => c.id !== id));
-
   const updateCargo = (id: number, field: keyof CargoItem, value: any) =>
     setCargos(cargos.map((c) => (c.id === id ? { ...c, [field]: value } : c)));
-
   const calcCbm = (c: CargoItem) =>
     (c.length / 100) * (c.width / 100) * (c.height / 100) * c.quantity;
-
   const totalCbm = cargos.reduce((sum, c) => sum + calcCbm(c), 0);
   const totalWeight = cargos.reduce((sum, c) => sum + c.weight * c.quantity, 0);
   const loadRate = ((totalCbm / selectedContainer.maxCbm) * 100).toFixed(1);
@@ -231,22 +368,21 @@ export default function Home() {
     setPage('result');
   };
 
-  const StackTooltip = ({ col }: { col: Column }) => {
-    const boxW = 120;
-    const boxH = 52;
+  const StackTooltip = ({ cell }: { cell: Cell }) => {
+    const boxW = 180;
     return (
       <div
         style={{
           position: 'fixed',
           left: tooltipPos.x + 16,
-          top: Math.min(tooltipPos.y - 20, window.innerHeight - 320),
+          top: Math.min(tooltipPos.y - 20, window.innerHeight - 400),
           background: 'white',
           border: '2px solid #4f8ef7',
           borderRadius: 12,
           padding: 16,
           boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
           zIndex: 1000,
-          minWidth: 200,
+          minWidth: 240,
           pointerEvents: 'none',
         }}
       >
@@ -258,7 +394,7 @@ export default function Home() {
             marginBottom: 10,
           }}
         >
-          📦 정면 스택 뷰
+          📦 정면 스택 뷰 + 하중
         </div>
         <div
           style={{
@@ -269,47 +405,93 @@ export default function Home() {
             marginBottom: 6,
           }}
         >
-          {[...col.boxes].reverse().map((box, i) => (
-            <div
-              key={i}
-              style={{
-                width: boxW,
-                height: boxH,
-                background: box.color,
-                borderRadius: 6,
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: 'white',
-                fontSize: 10,
-                fontWeight: 700,
-                position: 'relative',
-              }}
-            >
-              {cargos.find((c) => c.id === box.cargoId)?.noStack && (
+          {[...cell.boxes].reverse().map((box, ri) => {
+            const layerIdx = cell.boxes.length - 1 - ri;
+            const loadAbove = calcLoadAbove(cell.boxes, layerIdx);
+            const bottomBox = cell.boxes[0];
+            const allowedLoad = bottomBox.weight; // 허용하중 = 1단 박스 중량
+            const isOverload = layerIdx === 0 && loadAbove > allowedLoad;
+
+            return (
+              <div
+                key={ri}
+                style={{
+                  width: boxW,
+                  minHeight: 56,
+                  background: isOverload ? '#e04040' : box.color,
+                  borderRadius: 6,
+                  padding: '6px 10px',
+                  position: 'relative',
+                  border: isOverload
+                    ? '2px solid #ff4444'
+                    : '2px solid transparent',
+                }}
+              >
+                {cell.noStack && layerIdx === 0 && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: 3,
+                      right: 4,
+                      background: '#fff0f0',
+                      color: '#e04040',
+                      fontSize: 7,
+                      padding: '1px 4px',
+                      borderRadius: 3,
+                      fontWeight: 800,
+                    }}
+                  >
+                    NO STACK
+                  </div>
+                )}
+                {isOverload && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: 3,
+                      left: 4,
+                      background: '#fff0f0',
+                      color: '#e04040',
+                      fontSize: 7,
+                      padding: '1px 4px',
+                      borderRadius: 3,
+                      fontWeight: 800,
+                    }}
+                  >
+                    ⚠️ 하중초과
+                  </div>
+                )}
+                <div style={{ color: 'white', fontSize: 10, fontWeight: 700 }}>
+                  {box.layer}단 · {box.cargoName || '화물'}
+                </div>
                 <div
                   style={{
-                    position: 'absolute',
-                    top: 3,
-                    right: 4,
-                    background: '#fff0f0',
-                    color: '#e04040',
-                    fontSize: 8,
-                    padding: '1px 4px',
-                    borderRadius: 3,
-                    fontWeight: 800,
+                    color: 'rgba(255,255,255,0.85)',
+                    fontSize: 9,
+                    marginTop: 2,
                   }}
                 >
-                  NO STACK
+                  자체 중량: {box.weight}kg
                 </div>
-              )}
-              <div>{box.cargoName || '(미입력)'}</div>
-              <div style={{ fontSize: 9, opacity: 0.85 }}>
-                {box.layer}단 · {box.height}cm · {box.weight}kg
+                {loadAbove > 0 && (
+                  <div style={{ color: 'rgba(255,255,255,0.85)', fontSize: 9 }}>
+                    위 하중: +{loadAbove}kg &nbsp;→&nbsp; 합계{' '}
+                    {box.weight + loadAbove}kg
+                  </div>
+                )}
+                {layerIdx === 0 && (
+                  <div
+                    style={{
+                      color: isOverload ? '#ffcccc' : 'rgba(255,255,255,0.75)',
+                      fontSize: 9,
+                    }}
+                  >
+                    허용 하중: {allowedLoad}kg {isOverload ? '❌ 초과!' : '✅'}
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
         <div
           style={{
@@ -340,15 +522,16 @@ export default function Home() {
           }}
         >
           <div>
-            사용 높이: <strong>{col.usedHeight}cm</strong> /{' '}
+            사용 높이: <strong>{cell.usedHeight}cm</strong> /{' '}
             {selectedContainer.height}cm
           </div>
-          <div style={{ marginTop: 2 }}>총 {col.boxes.length}단 적재</div>
-          {col.boxes.length > 1 && (
-            <div style={{ marginTop: 4, color: '#aaa', fontSize: 10 }}>
-              💡 무거운 화물이 아래에 배치됩니다
-            </div>
-          )}
+          <div>
+            총 적재 중량:{' '}
+            <strong>{cell.boxes.reduce((s, b) => s + b.weight, 0)}kg</strong>
+          </div>
+          <div style={{ marginTop: 4, fontSize: 10, color: '#aaa' }}>
+            💡 허용하중 = 1단 박스 자체 중량
+          </div>
         </div>
       </div>
     );
@@ -364,6 +547,8 @@ export default function Home() {
       ...c,
       color: COLORS[i % COLORS.length],
     }));
+    const DISPLAY_LENGTH = 660;
+    const DISPLAY_WIDTH = 180;
 
     return (
       <main
@@ -381,7 +566,6 @@ export default function Home() {
           {selectedContainer.name} 컨테이너 기준
         </p>
 
-        {/* 요약 카드 */}
         <div
           style={{
             display: 'grid',
@@ -441,10 +625,22 @@ export default function Home() {
           ))}
         </div>
 
-        {/* 컨테이너별 배치도 */}
         {containerLoads.map((load, ci) => {
-          const usedLengthRatio = load.usedLength / selectedContainer.length;
-          const loadRate = (usedLengthRatio * 100).toFixed(1);
+          const colLoadRate = (
+            (load.usedLength / selectedContainer.length) *
+            100
+          ).toFixed(1);
+          const scaleL = DISPLAY_LENGTH / selectedContainer.length;
+          const scaleW = DISPLAY_WIDTH / selectedContainer.width;
+          const cog = calcCenterOfGravity(
+            load.cells,
+            selectedContainer.length,
+            selectedContainer.width
+          );
+          const xPct = (cog.x * 100).toFixed(1);
+          const yPct = (cog.y * 100).toFixed(1);
+          const xImbalance = Math.abs(cog.x - 0.5) > 0.1;
+          const yImbalance = Math.abs(cog.y - 0.5) > 0.1;
 
           return (
             <div
@@ -491,112 +687,395 @@ export default function Home() {
                     / {selectedContainer.length}cm
                   </span>
                   <span>
-                    적재율:{' '}
+                    사용률:{' '}
                     <strong
                       style={{
-                        color: Number(loadRate) > 90 ? '#38a169' : '#e07b30',
+                        color: Number(colLoadRate) > 90 ? '#38a169' : '#e07b30',
                       }}
                     >
-                      {loadRate}%
+                      {colLoadRate}%
                     </strong>
                   </span>
                 </div>
               </div>
-
-              {/* 길이 프로그레스 바 */}
               <div
                 style={{
                   background: '#f0f0f0',
                   borderRadius: 4,
                   height: 6,
-                  marginBottom: 12,
+                  marginBottom: 16,
                   overflow: 'hidden',
                 }}
               >
                 <div
                   style={{
-                    width: `${Math.min(100, Number(loadRate))}%`,
+                    width: `${Math.min(100, Number(colLoadRate))}%`,
                     height: '100%',
-                    background: Number(loadRate) > 90 ? '#38a169' : '#4f8ef7',
+                    background:
+                      Number(colLoadRate) > 90 ? '#38a169' : '#4f8ef7',
                     borderRadius: 4,
-                    transition: 'width 0.3s',
                   }}
                 />
               </div>
 
-              <div style={{ fontSize: 11, color: '#aaa', marginBottom: 10 }}>
-                💡 열에 마우스를 올리면 정면 스택 뷰가 나타납니다
-              </div>
-
-              {/* 상면도 */}
+              {/* 무게 중심 패널 */}
               <div
                 style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr 1fr',
+                  gap: 12,
+                  marginBottom: 16,
+                }}
+              >
+                <div
+                  style={{
+                    background: '#f7f9fc',
+                    borderRadius: 10,
+                    padding: 12,
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 700,
+                      color: '#555',
+                      marginBottom: 8,
+                    }}
+                  >
+                    ⚖️ 무게 중심
+                  </div>
+                  <div
+                    style={{
+                      position: 'relative',
+                      width: '100%',
+                      paddingBottom: '50%',
+                      background: '#e8f0fe',
+                      borderRadius: 6,
+                      border: '1px solid #c5d5f5',
+                    }}
+                  >
+                    <div
+                      style={{
+                        position: 'absolute',
+                        top: '50%',
+                        left: 0,
+                        right: 0,
+                        height: 1,
+                        background: '#aac',
+                        opacity: 0.5,
+                      }}
+                    />
+                    <div
+                      style={{
+                        position: 'absolute',
+                        left: '50%',
+                        top: 0,
+                        bottom: 0,
+                        width: 1,
+                        background: '#aac',
+                        opacity: 0.5,
+                      }}
+                    />
+                    <div
+                      style={{
+                        position: 'absolute',
+                        left: `${cog.x * 100}%`,
+                        top: `${cog.y * 100}%`,
+                        transform: 'translate(-50%, -50%)',
+                        width: 10,
+                        height: 10,
+                        borderRadius: '50%',
+                        background:
+                          xImbalance || yImbalance ? '#e04040' : '#38a169',
+                        border: '2px solid white',
+                        boxShadow: '0 0 4px rgba(0,0,0,0.3)',
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    background: '#f7f9fc',
+                    borderRadius: 10,
+                    padding: 12,
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 700,
+                      color: '#555',
+                      marginBottom: 8,
+                    }}
+                  >
+                    ↔ 전후 분포 (길이)
+                  </div>
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: 4,
+                      alignItems: 'center',
+                      marginBottom: 6,
+                    }}
+                  >
+                    <span style={{ fontSize: 10, color: '#888', minWidth: 24 }}>
+                      앞
+                    </span>
+                    <div
+                      style={{
+                        flex: 1,
+                        background: '#e0e0e0',
+                        borderRadius: 4,
+                        height: 14,
+                        overflow: 'hidden',
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: `${xPct}%`,
+                          height: '100%',
+                          background: xImbalance ? '#e04040' : '#4f8ef7',
+                          borderRadius: 4,
+                        }}
+                      />
+                    </div>
+                    <span
+                      style={{
+                        fontSize: 10,
+                        color: '#888',
+                        minWidth: 24,
+                        textAlign: 'right',
+                      }}
+                    >
+                      뒤
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      textAlign: 'center',
+                      color: xImbalance ? '#e04040' : '#333',
+                      fontWeight: 700,
+                    }}
+                  >
+                    {xPct}% / {(100 - Number(xPct)).toFixed(1)}%{' '}
+                    {xImbalance && '⚠️'}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 10,
+                      color: '#aaa',
+                      textAlign: 'center',
+                      marginTop: 2,
+                    }}
+                  >
+                    이상: 50% / 50%
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    background: '#f7f9fc',
+                    borderRadius: 10,
+                    padding: 12,
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 700,
+                      color: '#555',
+                      marginBottom: 8,
+                    }}
+                  >
+                    ↕ 좌우 분포 (폭)
+                  </div>
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: 4,
+                      alignItems: 'center',
+                      marginBottom: 6,
+                    }}
+                  >
+                    <span style={{ fontSize: 10, color: '#888', minWidth: 24 }}>
+                      좌
+                    </span>
+                    <div
+                      style={{
+                        flex: 1,
+                        background: '#e0e0e0',
+                        borderRadius: 4,
+                        height: 14,
+                        overflow: 'hidden',
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: `${yPct}%`,
+                          height: '100%',
+                          background: yImbalance ? '#e04040' : '#38a169',
+                          borderRadius: 4,
+                        }}
+                      />
+                    </div>
+                    <span
+                      style={{
+                        fontSize: 10,
+                        color: '#888',
+                        minWidth: 24,
+                        textAlign: 'right',
+                      }}
+                    >
+                      우
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      textAlign: 'center',
+                      color: yImbalance ? '#e04040' : '#333',
+                      fontWeight: 700,
+                    }}
+                  >
+                    {yPct}% / {(100 - Number(yPct)).toFixed(1)}%{' '}
+                    {yImbalance && '⚠️'}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 10,
+                      color: '#aaa',
+                      textAlign: 'center',
+                      marginTop: 2,
+                    }}
+                  >
+                    이상: 50% / 50%
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>
+                ↔ 길이 방향 &nbsp; ↕ 폭 방향 &nbsp; 💡 셀에 마우스를 올리면 스택
+                + 하중 뷰가 나타납니다
+              </div>
+
+              <div
+                style={{
+                  position: 'relative',
+                  width: DISPLAY_LENGTH + 4,
+                  height: DISPLAY_WIDTH + 4,
                   background: '#eef4ff',
                   border: '3px solid #4f8ef7',
                   borderRadius: 8,
-                  padding: '28px 12px 8px',
-                  minHeight: 140,
-                  display: 'flex',
-                  alignItems: 'flex-end',
-                  gap: 4,
-                  position: 'relative',
-                  overflowX: 'auto',
+                  overflow: 'hidden',
+                  marginBottom: 8,
                 }}
               >
                 <div
                   style={{
                     position: 'absolute',
-                    top: 8,
-                    left: 12,
-                    fontSize: 11,
+                    top: 4,
+                    left: 8,
+                    fontSize: 10,
                     fontWeight: 700,
                     color: '#4f8ef7',
+                    zIndex: 2,
                   }}
                 >
                   {selectedContainer.name} #{ci + 1}
                 </div>
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: `${cog.y * 100}%`,
+                    left: 0,
+                    right: 0,
+                    height: 1,
+                    background: '#e04040',
+                    opacity: 0.4,
+                    zIndex: 3,
+                  }}
+                />
+                <div
+                  style={{
+                    position: 'absolute',
+                    left: `${cog.x * 100}%`,
+                    top: 0,
+                    bottom: 0,
+                    width: 1,
+                    background: '#e04040',
+                    opacity: 0.4,
+                    zIndex: 3,
+                  }}
+                />
+                <div
+                  style={{
+                    position: 'absolute',
+                    left: `${cog.x * 100}%`,
+                    top: `${cog.y * 100}%`,
+                    transform: 'translate(-50%, -50%)',
+                    zIndex: 4,
+                    width: 10,
+                    height: 10,
+                    borderRadius: '50%',
+                    background:
+                      xImbalance || yImbalance ? '#e04040' : '#38a169',
+                    border: '2px solid white',
+                    boxShadow: '0 0 6px rgba(0,0,0,0.4)',
+                  }}
+                />
 
-                {load.columns.map((col) => {
-                  const isHovered = hoveredCol?.colId === col.colId;
-                  const colDisplayWidth = Math.max(
-                    48,
-                    Math.min(
-                      140,
-                      (col.colLength / selectedContainer.length) * 700
-                    )
-                  );
-                  const colDisplayHeight = Math.max(80, 44 * col.boxes.length);
+                {load.cells.map((cell) => {
+                  const isHovered = hoveredCell?.cellId === cell.cellId;
+                  const px = cell.x * scaleL,
+                    py = cell.y * scaleW;
+                  const pw = cell.cellLength * scaleL,
+                    ph = cell.cellWidth * scaleW;
+                  const bottomBox = cell.boxes[0];
+                  const loadAboveBottom = calcLoadAbove(cell.boxes, 0);
+                  const hasOverload =
+                    cell.boxes.length > 1 &&
+                    bottomBox &&
+                    loadAboveBottom > bottomBox.weight;
 
                   return (
                     <div
-                      key={col.colId}
+                      key={cell.cellId}
                       onMouseEnter={(e) => {
-                        setHoveredCol(col);
+                        setHoveredCell(cell);
                         setTooltipPos({ x: e.clientX, y: e.clientY });
                       }}
                       onMouseMove={(e) =>
                         setTooltipPos({ x: e.clientX, y: e.clientY })
                       }
-                      onMouseLeave={() => setHoveredCol(null)}
+                      onMouseLeave={() => setHoveredCell(null)}
                       style={{
-                        width: colDisplayWidth,
-                        height: colDisplayHeight,
-                        borderRadius: 6,
-                        cursor: 'pointer',
-                        position: 'relative',
-                        transform: isHovered ? 'scale(1.05)' : 'scale(1)',
-                        transition: 'all 0.15s ease',
-                        boxShadow: isHovered
-                          ? '0 4px 16px rgba(0,0,0,0.2)'
-                          : 'none',
-                        zIndex: isHovered ? 10 : 1,
-                        overflow: 'hidden',
+                        position: 'absolute',
+                        left: px,
+                        top: py,
+                        width: pw,
+                        height: ph,
                         display: 'flex',
                         flexDirection: 'row',
-                        flexShrink: 0,
+                        overflow: 'hidden',
+                        borderRadius: 3,
+                        cursor: 'pointer',
+                        border: hasOverload
+                          ? '2px solid #ff0000'
+                          : isHovered
+                          ? '2px solid white'
+                          : '1px solid rgba(255,255,255,0.3)',
+                        boxShadow: isHovered
+                          ? '0 0 0 2px #1a1a2e'
+                          : hasOverload
+                          ? '0 0 0 2px #e04040'
+                          : 'none',
+                        zIndex: isHovered ? 10 : 1,
+                        transition: 'all 0.15s ease',
                       }}
                     >
-                      {col.boxes.map((box, i) => (
+                      {cell.boxes.map((box, i) => (
                         <div
                           key={i}
                           style={{
@@ -607,82 +1086,92 @@ export default function Home() {
                             alignItems: 'center',
                             justifyContent: 'center',
                             color: 'white',
-                            fontSize: 8,
+                            fontSize: 7,
                             fontWeight: 700,
                             textAlign: 'center',
                             borderRight:
-                              i < col.boxes.length - 1
+                              i < cell.boxes.length - 1
                                 ? '1px solid rgba(255,255,255,0.4)'
                                 : 'none',
-                            padding: 2,
                             overflow: 'hidden',
+                            padding: 1,
                           }}
                         >
-                          <div
-                            style={{
-                              whiteSpace: 'nowrap',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              maxWidth: '100%',
-                            }}
-                          >
-                            {box.cargoName || '화물'}
-                          </div>
-                          <div style={{ fontSize: 7, opacity: 0.8 }}>
-                            {box.layer}단
-                          </div>
+                          {pw > 28 && (
+                            <div
+                              style={{
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                                maxWidth: '100%',
+                              }}
+                            >
+                              {box.cargoName || '화물'}
+                            </div>
+                          )}
+                          {ph > 18 && pw > 28 && (
+                            <div style={{ fontSize: 6, opacity: 0.8 }}>
+                              {box.layer}단
+                            </div>
+                          )}
                         </div>
                       ))}
-                      {cargos.find((c) => c.id === col.boxes[0]?.cargoId)
-                        ?.noStack && (
+                      {cell.noStack && (
                         <div
                           style={{
                             position: 'absolute',
-                            top: 3,
-                            right: 3,
+                            top: 2,
+                            right: 2,
                             background: '#fff0f0',
                             color: '#e04040',
-                            fontSize: 7,
+                            fontSize: 6,
                             padding: '1px 3px',
-                            borderRadius: 3,
+                            borderRadius: 2,
                             fontWeight: 800,
                           }}
                         >
-                          NO STACK
+                          NO
+                        </div>
+                      )}
+                      {hasOverload && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            bottom: 2,
+                            left: 2,
+                            background: '#e04040',
+                            color: 'white',
+                            fontSize: 6,
+                            padding: '1px 3px',
+                            borderRadius: 2,
+                            fontWeight: 800,
+                          }}
+                        >
+                          ⚠️
                         </div>
                       )}
                     </div>
                   );
                 })}
+              </div>
 
-                {/* 빈 공간 */}
-                {load.usedLength < selectedContainer.length && (
-                  <div
-                    style={{
-                      flex: 1,
-                      minWidth: 40,
-                      height: 60,
-                      background: '#dde4f0',
-                      borderRadius: 6,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      color: '#aaa',
-                      fontSize: 11,
-                      flexShrink: 0,
-                    }}
-                  >
-                    빈 공간
-                    <br />
-                    {selectedContainer.length - load.usedLength}cm
-                  </div>
-                )}
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  fontSize: 10,
+                  color: '#aaa',
+                  paddingLeft: 2,
+                  paddingRight: 2,
+                }}
+              >
+                <span>← 0cm</span>
+                <span>{selectedContainer.length}cm (길이) →</span>
               </div>
             </div>
           );
         })}
 
-        {/* 범례 */}
         <div
           style={{
             background: 'white',
@@ -728,7 +1217,6 @@ export default function Home() {
           </div>
         </div>
 
-        {/* 품목별 요약 */}
         <div
           style={{
             background: 'white',
@@ -764,7 +1252,7 @@ export default function Home() {
                     '수량',
                     '단위CBM',
                     '총CBM',
-                    '총중량(kg)',
+                    '중량(kg)',
                     '다단적재',
                   ].map((h) => (
                     <th
@@ -815,9 +1303,7 @@ export default function Home() {
                     >
                       {calcCbm(c).toFixed(3)}
                     </td>
-                    <td style={{ padding: '10px' }}>
-                      {(c.weight * c.quantity).toLocaleString()}
-                    </td>
+                    <td style={{ padding: '10px' }}>{c.weight}kg</td>
                     <td style={{ padding: '10px' }}>
                       <span
                         style={{
@@ -872,7 +1358,7 @@ export default function Home() {
           </button>
         </div>
 
-        {hoveredCol && <StackTooltip col={hoveredCol} />}
+        {hoveredCell && <StackTooltip cell={hoveredCell} />}
       </main>
     );
   }
@@ -881,7 +1367,7 @@ export default function Home() {
     <main
       style={{
         fontFamily: 'sans-serif',
-        maxWidth: 900,
+        maxWidth: 960,
         margin: '0 auto',
         padding: 24,
       }}
@@ -1083,7 +1569,7 @@ export default function Home() {
         <button
           onClick={addCargo}
           style={{
-            marginTop: 12,
+            marginTop: 10,
             background: 'none',
             border: 'none',
             color: '#4f8ef7',

@@ -40,40 +40,30 @@ type CargoItem = {
   noStack: boolean;
 };
 
-type PlacedBox = {
+// ✅ 3D 공간에 실제 배치된 박스
+type PlacedBox3D = {
   cargoId: number;
   cargoName: string;
   color: string;
-  weight: number;
-  height: number;
-  width: number;
-  length: number;
-  layer: number;
-};
-
-type Cell = {
-  cellId: number;
   x: number;
   y: number;
-  cellLength: number;
-  cellWidth: number;
-  boxes: PlacedBox[];
-  usedHeight: number;
+  z: number; // 시작 좌표
+  l: number;
+  w: number;
+  h: number; // 실제 크기 (회전 반영)
+  weight: number;
   noStack: boolean;
 };
 
-type ContainerLoad = {
+type ContainerLoad3D = {
   containerId: number;
   containerType: (typeof CONTAINER_TYPES)[number];
-  cells: Cell[];
-  usedLength: number;
+  boxes: PlacedBox3D[];
   cogX: number;
   cogY: number;
   xImbalance: boolean;
   yImbalance: boolean;
 };
-
-type FreeRect = { x: number; y: number; w: number; h: number };
 
 const COLORS = [
   '#4f8ef7',
@@ -86,497 +76,307 @@ const COLORS = [
   '#7c3aed',
 ];
 
-function simulateFill(freeRects: FreeRect[], remaining: CargoItem[]): number {
-  let score = 0;
-  let rects = [...freeRects];
-
-  for (const box of remaining.slice(0, 3)) {
-    // 👉 3개만 미리봄 (성능용)
-    let placed = false;
-
-    for (const rect of rects) {
-      if (box.length <= rect.w && box.width <= rect.h) {
-        rects = splitMaxRects(rects, rect.x, rect.y, box.length, box.width);
-        score += 1;
-        placed = true;
-        break;
-      }
-    }
-
-    if (!placed) break;
-  }
-
-  return score;
-}
-
+// ✅ 6방향 회전 (height 작은 것 우선)
 function get6Rotations(
   l: number,
   w: number,
   h: number
 ): [number, number, number][] {
   const seen = new Set<string>();
-  return [
-    [l, w, h],
-    [l, h, w],
-    [w, l, h],
-    [w, h, l],
-    [h, l, w],
-    [h, w, l],
-  ].filter(([a, b, c]) => {
-    const k = `${a},${b},${c}`;
-    if (seen.has(k)) return false;
-    seen.add(k);
-    return true;
-  }) as [number, number, number][];
+  return (
+    [
+      [l, w, h],
+      [w, l, h],
+      [l, h, w],
+      [h, l, w],
+      [w, h, l],
+      [h, w, l],
+    ] as [number, number, number][]
+  )
+    .filter(([a, b, c]) => {
+      const k = `${a},${b},${c}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    })
+    .sort((a, b) => a[2] - b[2]); // height 작은 것 우선
 }
 
-function calcLoadAbove(boxes: PlacedBox[], layerIdx: number): number {
-  return boxes.slice(layerIdx + 1).reduce((s, b) => s + b.weight, 0);
+// ✅ 두 박스가 x,y 평면에서 겹치는지
+function overlapsXY(
+  a: PlacedBox3D,
+  bx: number,
+  by: number,
+  bl: number,
+  bw: number
+): boolean {
+  return a.x < bx + bl && a.x + a.l > bx && a.y < by + bw && a.y + a.w > by;
 }
 
-function canStackOn(cell: Cell, newBox: { weight: number }): boolean {
-  if (cell.boxes.length === 0) return true;
-  return calcLoadAbove(cell.boxes, 0) + newBox.weight <= cell.boxes[0].weight;
-}
+// ✅ 새 박스를 (x,y,z)에 놓을 수 있는지 체크
+function canPlace(
+  boxes: PlacedBox3D[],
+  x: number,
+  y: number,
+  z: number,
+  l: number,
+  w: number,
+  h: number,
+  cL: number,
+  cW: number,
+  cH: number,
+  noStack: boolean,
+  weight: number
+): boolean {
+  // 컨테이너 범위 체크
+  if (x + l > cL || y + w > cW || z + h > cH) return false;
+  if (x < 0 || y < 0 || z < 0) return false;
 
-function maxRectsBSSF(
-  freeRects: FreeRect[],
-  bw: number,
-  bh: number
-): { rect: FreeRect; score: number } | null {
-  let best: { rect: FreeRect; score: number } | null = null;
-  for (const r of freeRects) {
-    if (bw > r.w || bh > r.h) continue;
-    const score = Math.min(r.w - bw, r.h - bh);
-    if (!best || score < best.score) best = { rect: r, score };
-  }
-  return best;
-}
-
-function splitMaxRects(
-  freeRects: FreeRect[],
-  px: number,
-  py: number,
-  pw: number,
-  ph: number
-): FreeRect[] {
-  const result: FreeRect[] = [];
-  for (const r of freeRects) {
+  // 다른 박스와 겹치는지 체크
+  for (const b of boxes) {
     if (
-      px >= r.x + r.w ||
-      px + pw <= r.x ||
-      py >= r.y + r.h ||
-      py + ph <= r.y
-    ) {
-      result.push(r);
-      continue;
-    }
-    if (py > r.y) result.push({ x: r.x, y: r.y, w: r.w, h: py - r.y });
-    if (py + ph < r.y + r.h)
-      result.push({ x: r.x, y: py + ph, w: r.w, h: r.y + r.h - (py + ph) });
-    if (px > r.x) result.push({ x: r.x, y: py, w: px - r.x, h: ph });
-    if (px + pw < r.x + r.w)
-      result.push({ x: px + pw, y: py, w: r.x + r.w - (px + pw), h: ph });
+      b.x < x + l &&
+      b.x + b.l > x &&
+      b.y < y + w &&
+      b.y + b.w > y &&
+      b.z < z + h &&
+      b.z + b.h > z
+    )
+      return false;
   }
-  return result.filter(
-    (r, i) =>
-      !result.some(
-        (o, j) =>
-          i !== j &&
-          o.x <= r.x &&
-          o.y <= r.y &&
-          o.x + o.w >= r.x + r.w &&
-          o.y + o.h >= r.y + r.h
-      )
+
+  if (z === 0) return true; // 바닥이면 OK
+
+  // 지지면 체크: 아래 박스들이 새 박스 바닥을 충분히 받쳐주는지
+  const supportArea = calcSupportArea(boxes, x, y, z, l, w);
+  const requiredArea = l * w * 0.5; // 50% 이상 지지 필요
+  if (supportArea < requiredArea) return false;
+
+  // 다단불가 박스 위에 올리는지 체크
+  for (const b of boxes) {
+    if (b.noStack && overlapsXY(b, x, y, l, w) && b.z + b.h === z) return false;
+  }
+
+  // 하중 체크: 바로 아래 박스들의 허용 하중
+  const belowBoxes = boxes.filter(
+    (b) => overlapsXY(b, x, y, l, w) && b.z + b.h === z
   );
+  for (const b of belowBoxes) {
+    const alreadyOnTop = boxes
+      .filter((ob) => overlapsXY(ob, b.x, b.y, b.l, b.w) && ob.z >= b.z + b.h)
+      .reduce((s, ob) => s + ob.weight, 0);
+    if (alreadyOnTop + weight > b.weight) return false;
+  }
+
+  return true;
 }
 
-function calcCOG(cells: Cell[], cL: number, cW: number) {
+// ✅ 지지 면적 계산 (아래 박스들과의 겹치는 면적 합산)
+function calcSupportArea(
+  boxes: PlacedBox3D[],
+  x: number,
+  y: number,
+  z: number,
+  l: number,
+  w: number
+): number {
+  let area = 0;
+  const belowBoxes = boxes.filter((b) => b.z + b.h === z);
+  for (const b of belowBoxes) {
+    const ox = Math.max(x, b.x);
+    const oy = Math.max(y, b.y);
+    const ex = Math.min(x + l, b.x + b.l);
+    const ey = Math.min(y + w, b.y + b.w);
+    if (ex > ox && ey > oy) area += (ex - ox) * (ey - oy);
+  }
+  return area;
+}
+
+// ✅ Extreme Points 생성
+function getExtremePoints(
+  boxes: PlacedBox3D[],
+  cL: number,
+  cW: number,
+  cH: number
+): { x: number; y: number; z: number }[] {
+  const pts = new Set<string>();
+  const add = (x: number, y: number, z: number) => {
+    if (x >= 0 && y >= 0 && z >= 0 && x < cL && y < cW && z < cH)
+      pts.add(`${x},${y},${z}`);
+  };
+
+  add(0, 0, 0); // 원점
+
+  for (const b of boxes) {
+    add(b.x + b.l, b.y, b.z); // 박스 오른쪽
+    add(b.x, b.y + b.w, b.z); // 박스 앞쪽
+    add(b.x, b.y, b.z + b.h); // 박스 위쪽
+    add(b.x + b.l, b.y + b.w, b.z); // 박스 오른쪽+앞
+    add(b.x + b.l, b.y, b.z + b.h); // 박스 오른쪽+위
+    add(b.x, b.y + b.w, b.z + b.h); // 박스 앞+위
+  }
+
+  return [...pts]
+    .map((s) => {
+      const [x, y, z] = s.split(',').map(Number);
+      return { x, y, z };
+    })
+    .sort((a, b) => a.z - b.z || a.x - b.x || a.y - b.y); // z 낮은 것 우선
+}
+
+function calcCOG(boxes: PlacedBox3D[], cL: number, cW: number) {
   let tw = 0,
     wx = 0,
     wy = 0;
-  for (const c of cells) {
-    const w = c.boxes.reduce((s, b) => s + b.weight, 0);
-    wx += (c.x + c.cellLength / 2) * w;
-    wy += (c.y + c.cellWidth / 2) * w;
-    tw += w;
+  for (const b of boxes) {
+    wx += (b.x + b.l / 2) * b.weight;
+    wy += (b.y + b.w / 2) * b.weight;
+    tw += b.weight;
   }
   if (tw === 0) return { x: 0.5, y: 0.5 };
   return { x: wx / tw / cL, y: wy / tw / cW };
 }
 
-type ActiveContainer = {
-  freeRects: FreeRect[];
-  cells: Cell[];
-  usedLength: number;
-  containerType: (typeof CONTAINER_TYPES)[number];
-};
+// ✅ 바닥 면적 기준 정렬
+function sortCargos(boxes: CargoItem[]): CargoItem[] {
+  return [...boxes].sort((a, b) => {
+    if (a.noStack !== b.noStack) return a.noStack ? -1 : 1;
+    const areaA = a.length * a.width,
+      areaB = b.length * b.width;
+    if (areaB !== areaA) return areaB - areaA;
+    if (b.weight !== a.weight) return b.weight - a.weight;
+    return b.length * b.width * b.height - a.length * a.width * a.height;
+  });
+}
 
-// 단일 컨테이너에 박스들 최대한 채우기 → 남은 박스 반환
-function packIntoContainer(
-  boxes: CargoItem[],
+// ✅ 단일 컨테이너에 3D 패킹
+function pack3D(
+  cargoList: CargoItem[],
   cargos: CargoItem[],
-  ct: (typeof CONTAINER_TYPES)[number],
-  cellIdRef: { v: number }
-): { cells: Cell[]; remaining: CargoItem[] } {
-  const container: ActiveContainer = {
-    freeRects: [{ x: 0, y: 0, w: ct.length, h: ct.width }],
-    cells: [],
-    usedLength: 0,
-    containerType: ct,
-  };
-
+  ct: (typeof CONTAINER_TYPES)[number]
+): { boxes: PlacedBox3D[]; remaining: CargoItem[] } {
+  const placed: PlacedBox3D[] = [];
   const remaining: CargoItem[] = [];
 
-  boxes.sort((a, b) => {
-    const areaA = a.length * a.width;
-    const areaB = b.length * b.width;
-
-    if (areaA !== areaB) return areaB - areaA;
-
-    return b.height - a.height;
-  });
-
-  for (let i = 0; i < boxes.length; i++) {
-    const cargo = boxes[i];
-
-    const remainingBoxes = boxes.slice(i + 1); // ✅ 여기로 이동
-
-    if (
-      cargo.height > ct.height &&
-      cargo.width > ct.height &&
-      cargo.length > ct.height
-    ) {
-      remaining.push(cargo);
-      continue;
-    }
-
-    if (
-      cargo.height > ct.height &&
-      cargo.width > ct.height &&
-      cargo.length > ct.height
-    ) {
-      remaining.push(cargo);
-      continue;
-    }
-
+  for (const cargo of cargoList) {
     const colorIdx = cargos.findIndex((c) => c.id === cargo.id);
     const color = COLORS[colorIdx % COLORS.length];
-    const box: PlacedBox = {
-      cargoId: cargo.id,
-      cargoName: cargo.name,
-      color,
-      weight: cargo.weight,
-      height: cargo.height,
-      width: cargo.width,
-      length: cargo.length,
-      layer: 0,
-    };
+    let boxPlaced = false;
 
-    let placed = false;
+    const rotations = get6Rotations(cargo.length, cargo.width, cargo.height);
+    const eps = getExtremePoints(placed, ct.length, ct.width, ct.height);
 
-    // 다단 쌓기 시도
-    if (!cargo.noStack) {
-      for (const cell of container.cells) {
-        if (cell.noStack) continue;
-        if (!canStackOn(cell, box)) continue;
-        const rotations = get6Rotations(
-          cargo.length,
-          cargo.width,
-          cargo.height
-        );
-        for (const [rl, rw, rh] of rotations) {
-          if (
-            cell.cellLength >= rl &&
-            cell.cellWidth >= rw &&
-            cell.usedHeight + rh <= ct.height
-          ) {
-            cell.boxes.push({
-              ...box,
-              length: rl,
-              width: rw,
-              height: rh,
-              layer: cell.boxes.length + 1,
-            });
-            cell.usedHeight += rh;
-            placed = true;
-            break;
-          }
-        }
-        if (placed) break;
-      }
-    }
+    // Best Fit: 모든 EP × 모든 회전 중 가장 좋은 위치 찾기
+    let best: {
+      x: number;
+      y: number;
+      z: number;
+      l: number;
+      w: number;
+      h: number;
+      score: number;
+    } | null = null;
 
-    // 새 셀 배치
-    if (!placed) {
-      const rotations = get6Rotations(cargo.length, cargo.width, cargo.height);
-      let bestFit: {
-        rect: FreeRect;
-        rl: number;
-        rw: number;
-        rh: number;
-        score: number;
-      } | null = null;
+    for (const ep of eps) {
       for (const [rl, rw, rh] of rotations) {
-        if (rh > ct.height) continue;
-        // 🔥 모든 freeRects + 모든 회전 직접 탐색
-        for (const rect of container.freeRects) {
-          if (rl <= rect.w && rw <= rect.h) {
-            // 🔥 Lookahead 점수 추가
-            const baseScore = Math.min(rect.w - rl, rect.h - rw);
+        if (
+          !canPlace(
+            placed,
+            ep.x,
+            ep.y,
+            ep.z,
+            rl,
+            rw,
+            rh,
+            ct.length,
+            ct.width,
+            ct.height,
+            cargo.noStack,
+            cargo.weight
+          )
+        )
+          continue;
 
-            // 👉 임시 freeRects 만들기
-            const newRects = splitMaxRects(
-              container.freeRects,
-              rect.x,
-              rect.y,
-              rl,
-              rw
-            );
-
-            // 👉 다음 박스 시뮬레이션
-            const futureScore = simulateFill(newRects, remainingBoxes);
-
-            // 👉 최종 점수
-            const score = baseScore - futureScore * 10;
-            if (!bestFit || score < bestFit.score) {
-              bestFit = {
-                rect,
-                rl,
-                rw,
-                rh,
-                score,
-              };
-            }
-          }
+        // 점수: z 낮을수록, x 낮을수록, y 낮을수록 좋음
+        const score = ep.z * 10000 + ep.x * 100 + ep.y;
+        if (!best || score < best.score) {
+          best = { x: ep.x, y: ep.y, z: ep.z, l: rl, w: rw, h: rh, score };
         }
-      }
-      if (bestFit) {
-        container.cells.push({
-          cellId: cellIdRef.v++,
-          x: bestFit.rect.x,
-          y: bestFit.rect.y,
-          cellLength: bestFit.rl,
-          cellWidth: bestFit.rw,
-          boxes: [
-            {
-              ...box,
-              length: bestFit.rl,
-              width: bestFit.rw,
-              height: bestFit.rh,
-              layer: 1,
-            },
-          ],
-          usedHeight: bestFit.rh,
-          noStack: cargo.noStack,
-        });
-        container.freeRects = splitMaxRects(
-          container.freeRects,
-          bestFit.rect.x,
-          bestFit.rect.y,
-          bestFit.rl,
-          bestFit.rw
-        );
-        placed = true;
       }
     }
 
-    if (!placed) remaining.push(cargo);
+    if (best) {
+      placed.push({
+        cargoId: cargo.id,
+        cargoName: cargo.name,
+        color,
+        x: best.x,
+        y: best.y,
+        z: best.z,
+        l: best.l,
+        w: best.w,
+        h: best.h,
+        weight: cargo.weight,
+        noStack: cargo.noStack,
+      });
+      boxPlaced = true;
+    }
+
+    if (!boxPlaced) remaining.push(cargo);
   }
 
-  return { cells: container.cells, remaining };
+  return { boxes: placed, remaining };
 }
 
-// 여러 정렬 전략 시도 → 가장 적게 남는 결과 선택
-function packBestStrategy(
-  boxes: CargoItem[],
-  cargos: CargoItem[],
-  ct: (typeof CONTAINER_TYPES)[number],
-  cellIdRef: { v: number }
-): { cells: Cell[]; remaining: CargoItem[] } {
-  const strategies = [
-    (b: CargoItem[]) =>
-      [...b].sort((a, z) => {
-        if (a.noStack !== z.noStack) return a.noStack ? -1 : 1;
-        return (
-          Math.max(z.length, z.width, z.height) -
-          Math.max(a.length, a.width, a.height)
-        );
-      }),
-    (b: CargoItem[]) =>
-      [...b].sort((a, z) => {
-        if (a.noStack !== z.noStack) return a.noStack ? -1 : 1;
-        return z.length * z.width * z.height - a.length * a.width * a.height;
-      }),
-    (b: CargoItem[]) =>
-      [...b].sort((a, z) => {
-        if (a.noStack !== z.noStack) return a.noStack ? -1 : 1;
-        return z.length * z.width - a.length * a.width;
-      }),
-    (b: CargoItem[]) =>
-      [...b].sort((a, z) => {
-        if (a.noStack !== z.noStack) return a.noStack ? -1 : 1;
-        return z.weight - a.weight;
-      }),
-  ];
-
-  let best: { cells: Cell[]; remaining: CargoItem[] } | null = null;
-  const savedId = cellIdRef.v;
-
-  for (const s of strategies) {
-    cellIdRef.v = savedId;
-    const result = packIntoContainer(s(boxes), cargos, ct, cellIdRef);
-    if (!best || result.remaining.length < best.remaining.length) best = result;
-    if (best.remaining.length === 0) break;
-  }
-  return best!;
-}
-
-// ✅ 메인 로직: 자동 컨테이너 선택 + 순차 적재
-function buildContainerLoads(cargos: CargoItem[]): ContainerLoad[] {
-  // 박스 1개씩 펼치기
+function buildContainerLoads(cargos: CargoItem[]): ContainerLoad3D[] {
   let remaining = [...cargos].flatMap((c) =>
     Array.from({ length: c.quantity }, () => ({ ...c, quantity: 1 }))
   );
-  const loads: ContainerLoad[] = [];
-  const cellIdRef = { v: 0 };
+  const loads: ContainerLoad3D[] = [];
   let containerId = 0;
+  let safety = 0;
 
-  while (remaining.length > 0) {
-    // ✅ 남은 화물의 총 CBM 계산
+  while (remaining.length > 0 && safety < 50) {
+    safety++;
     const totalCbm = remaining.reduce(
       (s, c) => s + (c.length / 100) * (c.width / 100) * (c.height / 100),
       0
     );
     const totalWeight = remaining.reduce((s, c) => s + c.weight, 0);
 
-    // ✅ 컨테이너 자동 선택: 40HQ → 40GP → 20GP
-    // CBM과 중량 모두 고려해서 가장 적합한 컨테이너 선택
-    let selectedCt = CONTAINER_TYPES[0]; // 기본 40HQ
+    let selectedCt = CONTAINER_TYPES[0];
     for (const ct of CONTAINER_TYPES) {
-      if (totalCbm <= ct.maxCbm * 0.9 && totalWeight <= ct.maxWeight) {
+      if (totalCbm <= ct.maxCbm * 0.92 && totalWeight <= ct.maxWeight) {
         selectedCt = ct;
         break;
       }
     }
 
-    // ✅ 선택된 컨테이너에 최적 적재
-    const { cells, remaining: leftover } = packBestStrategy(
-      remaining,
-      cargos,
-      selectedCt,
-      cellIdRef
-    );
+    const sorted = sortCargos(remaining);
+    const { boxes, remaining: leftover } = pack3D(sorted, cargos, selectedCt);
 
-    // 무한루프 방지: 아무것도 못 넣으면 강제로 다음 컨테이너
-    if (cells.length === 0) {
-      remaining = leftover.slice(1); // 못 넣는 화물 스킵
+    if (boxes.length === 0) {
+      remaining = leftover.slice(1);
       continue;
     }
 
-    const usedLength =
-      cells.length > 0 ? Math.max(...cells.map((c) => c.x + c.cellLength)) : 0;
-    const cog = calcCOG(cells, selectedCt.length, selectedCt.width);
-
+    const cog = calcCOG(boxes, selectedCt.length, selectedCt.width);
     loads.push({
       containerId: containerId++,
       containerType: selectedCt,
-      cells,
-      usedLength,
+      boxes,
       cogX: cog.x,
       cogY: cog.y,
       xImbalance: Math.abs(cog.x - 0.5) > 0.1,
       yImbalance: Math.abs(cog.y - 0.5) > 0.1,
     });
-
     remaining = leftover;
   }
-
   return loads;
 }
 
 export default function Home() {
-  const handleReset = () => {
-    setCargos([
-      {
-        id: 1,
-        name: '',
-        length: 0,
-        width: 0,
-        height: 0,
-        weight: 0,
-        quantity: 1,
-        noStack: false,
-      },
-    ]);
-
-    setContainerLoads([]);
-    setPage('input');
-    setQuickInput('');
-    setHoveredCell(null);
-  };
   const [quickInput, setQuickInput] = useState('');
-  const parseMultipleQuickInput = (text: string) => {
-    return text
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean)
-      .map((item) => {
-        let cleaned = item.toLowerCase().trim();
-
-        // 🔥 x, *, 공백 통일
-        cleaned = cleaned.replace(/[*x]/g, ' ');
-        cleaned = cleaned.replace(/\s+/g, ' ');
-
-        // 🔥 (2) → 2
-        cleaned = cleaned.replace(/\((\d+)\)/, ' $1');
-
-        // 🔥 숫자만 추출
-        const numbers = cleaned.match(/\d+/g);
-
-        if (!numbers || numbers.length < 3) return null;
-
-        const length = Number(numbers[0]);
-        const width = Number(numbers[1]);
-        const height = Number(numbers[2]);
-        const quantity = numbers[3] ? Number(numbers[3]) : 1;
-
-        return {
-          length,
-          width,
-          height,
-          quantity,
-        };
-      })
-      .filter(Boolean) as {
-      length: number;
-      width: number;
-      height: number;
-      quantity: number;
-    }[];
-  };
-  const handleQuickAdd = () => {
-    const parsedList = parseMultipleQuickInput(quickInput);
-
-    if (!parsedList.length) {
-      alert('형식이 잘못됐어요');
-      return;
-    }
-
-    const newItems = parsedList.map((p) => ({
-      id: Date.now() + Math.random(),
-      name: '',
-      length: p.length,
-      width: p.width,
-      height: p.height,
-      weight: 0,
-      quantity: p.quantity,
-      noStack: false,
-    }));
-
-    setCargos((prev) => [...prev, ...newItems]);
-    setQuickInput('');
-  };
   const [cargos, setCargos] = useState<CargoItem[]>([
     {
       id: 1,
@@ -590,9 +390,74 @@ export default function Home() {
     },
   ]);
   const [page, setPage] = useState<'input' | 'result'>('input');
-  const [containerLoads, setContainerLoads] = useState<ContainerLoad[]>([]);
-  const [hoveredCell, setHoveredCell] = useState<Cell | null>(null);
+  const [containerLoads, setContainerLoads] = useState<ContainerLoad3D[]>([]);
+  const [hoveredBox, setHoveredBox] = useState<PlacedBox3D | null>(null);
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
+
+  const handleReset = () => {
+    setCargos([
+      {
+        id: 1,
+        name: '',
+        length: 0,
+        width: 0,
+        height: 0,
+        weight: 0,
+        quantity: 1,
+        noStack: false,
+      },
+    ]);
+    setContainerLoads([]);
+    setPage('input');
+    setQuickInput('');
+    setHoveredBox(null);
+  };
+
+  const parseQuickInput = (text: string) => {
+    return text
+      .split(',')
+      .map((item) => {
+        let s = item
+          .trim()
+          .toLowerCase()
+          .replace(/[*x]/g, ' ')
+          .replace(/\s+/g, ' ')
+          .replace(/\((\d+)\)/, ' $1');
+        const nums = s.match(/\d+/g);
+        if (!nums || nums.length < 3) return null;
+        return {
+          length: +nums[0],
+          width: +nums[1],
+          height: +nums[2],
+          quantity: nums[3] ? +nums[3] : 1,
+        };
+      })
+      .filter(Boolean) as {
+      length: number;
+      width: number;
+      height: number;
+      quantity: number;
+    }[];
+  };
+
+  const handleQuickAdd = () => {
+    const parsed = parseQuickInput(quickInput);
+    if (!parsed.length) {
+      alert('형식이 잘못됐어요');
+      return;
+    }
+    setCargos((prev) => [
+      ...prev,
+      ...parsed.map((p) => ({
+        id: Date.now() + Math.random(),
+        name: '',
+        ...p,
+        weight: 0,
+        noStack: false,
+      })),
+    ]);
+    setQuickInput('');
+  };
 
   const addCargo = () =>
     setCargos([
@@ -616,25 +481,25 @@ export default function Home() {
     (c.length / 100) * (c.width / 100) * (c.height / 100) * c.quantity;
   const totalCbm = cargos.reduce((s, c) => s + calcCbm(c), 0);
   const totalWeight = cargos.reduce((s, c) => s + c.weight * c.quantity, 0);
-
   const calculate = () => {
     setContainerLoads(buildContainerLoads(cargos));
     setPage('result');
   };
 
-  const StackTooltip = ({ cell }: { cell: Cell }) => (
+  // 박스 툴팁
+  const BoxTooltip = ({ box }: { box: PlacedBox3D }) => (
     <div
       style={{
         position: 'fixed',
         left: tooltipPos.x + 16,
-        top: Math.min(tooltipPos.y - 20, window.innerHeight - 400),
+        top: Math.min(tooltipPos.y - 20, window.innerHeight - 300),
         background: 'white',
         border: '2px solid #4f8ef7',
         borderRadius: 12,
         padding: 16,
         boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
         zIndex: 1000,
-        minWidth: 240,
+        minWidth: 220,
         pointerEvents: 'none',
       }}
     >
@@ -646,104 +511,40 @@ export default function Home() {
           marginBottom: 10,
         }}
       >
-        📦 정면 스택 뷰 + 하중
+        📦 박스 정보
       </div>
       <div
         style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 3,
-          alignItems: 'center',
-          marginBottom: 6,
+          background: box.color,
+          borderRadius: 8,
+          padding: '10px 14px',
+          marginBottom: 10,
         }}
       >
-        {[...cell.boxes].reverse().map((box, ri) => {
-          const layerIdx = cell.boxes.length - 1 - ri;
-          const loadAbove = calcLoadAbove(cell.boxes, layerIdx);
-          const isOverload =
-            layerIdx === 0 &&
-            cell.boxes.length > 1 &&
-            loadAbove > cell.boxes[0].weight;
-          return (
-            <div
-              key={ri}
-              style={{
-                width: 180,
-                minHeight: 52,
-                background: isOverload ? '#e04040' : box.color,
-                borderRadius: 6,
-                padding: '6px 10px',
-                border: isOverload
-                  ? '2px solid #ff4444'
-                  : '2px solid transparent',
-              }}
-            >
-              <div style={{ color: 'white', fontSize: 10, fontWeight: 700 }}>
-                {box.layer}단 · {box.cargoName || '화물'}
-              </div>
-              <div
-                style={{
-                  color: 'rgba(255,255,255,0.85)',
-                  fontSize: 9,
-                  marginTop: 2,
-                }}
-              >
-                크기: {box.length}×{box.width}×{box.height}cm · {box.weight}kg
-              </div>
-              {loadAbove > 0 && (
-                <div style={{ color: 'rgba(255,255,255,0.85)', fontSize: 9 }}>
-                  위 하중: +{loadAbove}kg → 합계 {box.weight + loadAbove}kg
-                </div>
-              )}
-              {layerIdx === 0 && cell.boxes.length > 1 && (
-                <div
-                  style={{
-                    color: isOverload ? '#ffcccc' : 'rgba(255,255,255,0.7)',
-                    fontSize: 9,
-                  }}
-                >
-                  허용 하중: {cell.boxes[0].weight}kg {isOverload ? '❌' : '✅'}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-      <div
-        style={{
-          width: 200,
-          height: 8,
-          background: '#888',
-          borderRadius: 4,
-          margin: '0 auto',
-        }}
-      />
-      <div
-        style={{
-          fontSize: 10,
-          color: '#aaa',
-          textAlign: 'center',
-          marginTop: 4,
-        }}
-      >
-        컨테이너 바닥
-      </div>
-      <div
-        style={{
-          marginTop: 10,
-          fontSize: 11,
-          color: '#666',
-          borderTop: '1px solid #eee',
-          paddingTop: 8,
-        }}
-      >
-        <div>
-          사용 높이: <strong>{cell.usedHeight}cm</strong>
+        <div style={{ color: 'white', fontSize: 13, fontWeight: 700 }}>
+          {box.cargoName || '(미입력)'}
         </div>
-        <div>
-          총 중량:{' '}
-          <strong>{cell.boxes.reduce((s, b) => s + b.weight, 0)}kg</strong>
+        <div
+          style={{
+            color: 'rgba(255,255,255,0.85)',
+            fontSize: 11,
+            marginTop: 4,
+          }}
+        >
+          크기: {box.l}×{box.w}×{box.h}cm
         </div>
+        <div style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11 }}>
+          중량: {box.weight}kg
+        </div>
+        {box.noStack && (
+          <div style={{ color: '#ffcccc', fontSize: 11 }}>❌ 다단 불가</div>
+        )}
+      </div>
+      <div style={{ fontSize: 11, color: '#666' }}>
+        <div>
+          위치: X={box.x}cm / Y={box.y}cm / Z={box.z}cm
+        </div>
+        <div>허용 하중: {box.weight}kg</div>
       </div>
     </div>
   );
@@ -754,10 +555,10 @@ export default function Home() {
       ...c,
       color: COLORS[i % COLORS.length],
     }));
-    const DISPLAY_LENGTH = 660;
-    const DISPLAY_WIDTH = 180;
+    const DL = 660,
+      DW = 180,
+      DH = 120; // 상면도/측면도 표시 크기
 
-    // 컨테이너 타입별 요약
     const summary = CONTAINER_TYPES.map((ct) => ({
       ...ct,
       count: containerLoads.filter((l) => l.containerType.name === ct.name)
@@ -777,73 +578,40 @@ export default function Home() {
           📊 적재 계산 결과
         </h1>
         <p style={{ color: '#888', marginBottom: 24 }}>
-          3D 6방향 회전 · 자동 컨테이너 선택
+          3D Extreme Points · 6방향 회전 · 자동 컨테이너 선택
         </p>
 
         {/* 요약 카드 */}
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: `repeat(${2 + summary.length}, 1fr)`,
+            gridTemplateColumns: `repeat(${2 + summary.length},1fr)`,
             gap: 16,
             marginBottom: 24,
           }}
         >
-          <div
-            style={{
-              background: 'white',
-              borderRadius: 12,
-              padding: 20,
-              boxShadow: '0 2px 8px rgba(0,0,0,0.07)',
-              textAlign: 'center',
-            }}
-          >
+          {[
+            {
+              label: '총 컨테이너',
+              value: `${totalContainers}개`,
+              color: '#1a1a2e',
+              sub: '자동 선택',
+            },
+            {
+              label: '총 CBM',
+              value: totalCbm.toFixed(2),
+              color: '#4f8ef7',
+              sub: 'm³',
+            },
+            ...summary.map((s) => ({
+              label: s.name,
+              value: `${s.count}개`,
+              color: '#38a169',
+              sub: `최대 ${s.maxCbm} CBM`,
+            })),
+          ].map((stat) => (
             <div
-              style={{
-                fontSize: 12,
-                color: '#888',
-                fontWeight: 600,
-                marginBottom: 8,
-                textTransform: 'uppercase',
-              }}
-            >
-              총 컨테이너
-            </div>
-            <div style={{ fontSize: 32, fontWeight: 800, color: '#1a1a2e' }}>
-              {totalContainers}개
-            </div>
-            <div style={{ fontSize: 12, color: '#aaa', marginTop: 4 }}>
-              자동 선택
-            </div>
-          </div>
-          <div
-            style={{
-              background: 'white',
-              borderRadius: 12,
-              padding: 20,
-              boxShadow: '0 2px 8px rgba(0,0,0,0.07)',
-              textAlign: 'center',
-            }}
-          >
-            <div
-              style={{
-                fontSize: 12,
-                color: '#888',
-                fontWeight: 600,
-                marginBottom: 8,
-                textTransform: 'uppercase',
-              }}
-            >
-              총 CBM
-            </div>
-            <div style={{ fontSize: 32, fontWeight: 800, color: '#4f8ef7' }}>
-              {totalCbm.toFixed(2)}
-            </div>
-            <div style={{ fontSize: 12, color: '#aaa', marginTop: 4 }}>m³</div>
-          </div>
-          {summary.map((s) => (
-            <div
-              key={s.name}
+              key={stat.label}
               style={{
                 background: 'white',
                 borderRadius: 12,
@@ -861,13 +629,13 @@ export default function Home() {
                   textTransform: 'uppercase',
                 }}
               >
-                {s.name}
+                {stat.label}
               </div>
-              <div style={{ fontSize: 32, fontWeight: 800, color: '#38a169' }}>
-                {s.count}개
+              <div style={{ fontSize: 32, fontWeight: 800, color: stat.color }}>
+                {stat.value}
               </div>
               <div style={{ fontSize: 12, color: '#aaa', marginTop: 4 }}>
-                최대 {s.maxCbm} CBM
+                {stat.sub}
               </div>
             </div>
           ))}
@@ -876,20 +644,15 @@ export default function Home() {
         {/* 컨테이너별 배치도 */}
         {containerLoads.map((load, ci) => {
           const ct = load.containerType;
-          const colLoadRate = ((load.usedLength / ct.length) * 100).toFixed(1);
-          const scaleL = DISPLAY_LENGTH / ct.length;
-          const scaleW = DISPLAY_WIDTH / ct.width;
-          const loadedCbm = load.cells.reduce(
-            (s, cell) =>
-              s +
-              cell.boxes.reduce(
-                (bs, b) =>
-                  bs + (b.length / 100) * (b.width / 100) * (b.height / 100),
-                0
-              ),
+          const loadedCbm = load.boxes.reduce(
+            (s, b) => s + (b.l / 100) * (b.w / 100) * (b.h / 100),
             0
           );
+          const loadedWeight = load.boxes.reduce((s, b) => s + b.weight, 0);
           const cbmRate = ((loadedCbm / ct.maxCbm) * 100).toFixed(1);
+          const scaleL = DL / ct.length,
+            scaleW = DW / ct.width,
+            scaleH = DH / ct.height;
 
           return (
             <div
@@ -965,6 +728,13 @@ export default function Home() {
                     / {ct.maxCbm}
                   </span>
                   <span>
+                    중량:{' '}
+                    <strong style={{ color: '#4f8ef7' }}>
+                      {loadedWeight.toLocaleString()}
+                    </strong>{' '}
+                    / {ct.maxWeight.toLocaleString()}kg
+                  </span>
+                  <span>
                     적재율:{' '}
                     <strong
                       style={{
@@ -977,7 +747,6 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* CBM 프로그레스 바 */}
               <div
                 style={{
                   background: '#f0f0f0',
@@ -993,219 +762,275 @@ export default function Home() {
                     height: '100%',
                     background: Number(cbmRate) > 90 ? '#38a169' : '#4f8ef7',
                     borderRadius: 4,
-                    transition: 'width 0.3s',
                   }}
                 />
               </div>
 
-              <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>
-                ↔ 길이 방향 &nbsp; ↕ 폭 방향 &nbsp; 💡 셀에 마우스를 올리면 스택
-                + 하중 뷰
-              </div>
-
-              {/* 상면도 */}
-              <div
-                style={{
-                  position: 'relative',
-                  width: DISPLAY_LENGTH + 4,
-                  height: DISPLAY_WIDTH + 4,
-                  background: '#eef4ff',
-                  border: '3px solid #4f8ef7',
-                  borderRadius: 8,
-                  overflow: 'hidden',
-                  marginBottom: 8,
-                }}
-              >
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: 4,
-                    left: 8,
-                    fontSize: 10,
-                    fontWeight: 700,
-                    color: '#4f8ef7',
-                    zIndex: 2,
-                  }}
-                >
-                  {ct.name} #{ci + 1}
-                </div>
-
-                {/* 무게중심 오버레이 (표시는 하되 UI 카드는 숨김) */}
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: `${load.cogY * 100}%`,
-                    left: 0,
-                    right: 0,
-                    height: 1,
-                    background: '#e04040',
-                    opacity: 0.3,
-                    zIndex: 3,
-                  }}
-                />
-                <div
-                  style={{
-                    position: 'absolute',
-                    left: `${load.cogX * 100}%`,
-                    top: 0,
-                    bottom: 0,
-                    width: 1,
-                    background: '#e04040',
-                    opacity: 0.3,
-                    zIndex: 3,
-                  }}
-                />
-                <div
-                  style={{
-                    position: 'absolute',
-                    left: `${load.cogX * 100}%`,
-                    top: `${load.cogY * 100}%`,
-                    transform: 'translate(-50%,-50%)',
-                    zIndex: 4,
-                    width: 8,
-                    height: 8,
-                    borderRadius: '50%',
-                    background:
-                      load.xImbalance || load.yImbalance
-                        ? '#e04040'
-                        : '#38a169',
-                    border: '2px solid white',
-                    boxShadow: '0 0 4px rgba(0,0,0,0.4)',
-                  }}
-                />
-
-                {load.cells.map((cell) => {
-                  const isHovered = hoveredCell?.cellId === cell.cellId;
-                  const px = cell.x * scaleL,
-                    py = cell.y * scaleW;
-                  const pw = cell.cellLength * scaleL,
-                    ph = cell.cellWidth * scaleW;
-                  const hasOverload =
-                    cell.boxes.length > 1 &&
-                    calcLoadAbove(cell.boxes, 0) > cell.boxes[0].weight;
-
-                  return (
+              {/* 상면도 + 측면도 */}
+              <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
+                {/* 상면도 (x-y 평면, 위에서 내려다봄) */}
+                <div>
+                  <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>
+                    📐 상면도 (위에서)
+                  </div>
+                  <div
+                    style={{
+                      position: 'relative',
+                      width: DL + 4,
+                      height: DW + 4,
+                      background: '#eef4ff',
+                      border: '3px solid #4f8ef7',
+                      borderRadius: 8,
+                      overflow: 'hidden',
+                    }}
+                  >
                     <div
-                      key={cell.cellId}
-                      onMouseEnter={(e) => {
-                        setHoveredCell(cell);
-                        setTooltipPos({ x: e.clientX, y: e.clientY });
-                      }}
-                      onMouseMove={(e) =>
-                        setTooltipPos({ x: e.clientX, y: e.clientY })
-                      }
-                      onMouseLeave={() => setHoveredCell(null)}
                       style={{
                         position: 'absolute',
-                        left: px,
-                        top: py,
-                        width: pw,
-                        height: ph,
-                        display: 'flex',
-                        flexDirection: 'row',
-                        overflow: 'hidden',
-                        borderRadius: 3,
-                        cursor: 'pointer',
-                        border: hasOverload
-                          ? '2px solid #ff0000'
-                          : isHovered
-                          ? '2px solid white'
-                          : '1px solid rgba(255,255,255,0.3)',
-                        boxShadow: isHovered ? '0 0 0 2px #1a1a2e' : 'none',
-                        zIndex: isHovered ? 10 : 1,
-                        transition: 'all 0.15s ease',
+                        top: 3,
+                        left: 6,
+                        fontSize: 9,
+                        fontWeight: 700,
+                        color: '#4f8ef7',
+                        zIndex: 2,
                       }}
                     >
-                      {cell.boxes.map((box, i) => (
-                        <div
-                          key={i}
-                          style={{
-                            flex: 1,
-                            background: box.color,
-                            display: 'flex',
-                            flexDirection: 'column',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            color: 'white',
-                            fontSize: 7,
-                            fontWeight: 700,
-                            textAlign: 'center',
-                            borderRight:
-                              i < cell.boxes.length - 1
-                                ? '1px solid rgba(255,255,255,0.4)'
-                                : 'none',
-                            overflow: 'hidden',
-                            padding: 1,
-                          }}
-                        >
-                          {pw > 28 && (
-                            <div
-                              style={{
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap',
-                                maxWidth: '100%',
-                              }}
-                            >
-                              {box.cargoName || '화물'}
-                            </div>
-                          )}
-                          {ph > 18 && pw > 28 && (
-                            <div style={{ fontSize: 6, opacity: 0.8 }}>
-                              {box.layer}단
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                      {cell.noStack && (
-                        <div
-                          style={{
-                            position: 'absolute',
-                            top: 2,
-                            right: 2,
-                            background: '#fff0f0',
-                            color: '#e04040',
-                            fontSize: 6,
-                            padding: '1px 3px',
-                            borderRadius: 2,
-                            fontWeight: 800,
-                          }}
-                        >
-                          NO
-                        </div>
-                      )}
-                      {hasOverload && (
-                        <div
-                          style={{
-                            position: 'absolute',
-                            bottom: 2,
-                            left: 2,
-                            background: '#e04040',
-                            color: 'white',
-                            fontSize: 6,
-                            padding: '1px 3px',
-                            borderRadius: 2,
-                            fontWeight: 800,
-                          }}
-                        >
-                          ⚠️
-                        </div>
-                      )}
+                      {ct.name}
                     </div>
-                  );
-                })}
+
+                    {/* 무게중심 */}
+                    <div
+                      style={{
+                        position: 'absolute',
+                        top: `${load.cogY * 100}%`,
+                        left: 0,
+                        right: 0,
+                        height: 1,
+                        background: '#e04040',
+                        opacity: 0.3,
+                        zIndex: 3,
+                      }}
+                    />
+                    <div
+                      style={{
+                        position: 'absolute',
+                        left: `${load.cogX * 100}%`,
+                        top: 0,
+                        bottom: 0,
+                        width: 1,
+                        background: '#e04040',
+                        opacity: 0.3,
+                        zIndex: 3,
+                      }}
+                    />
+                    <div
+                      style={{
+                        position: 'absolute',
+                        left: `${load.cogX * 100}%`,
+                        top: `${load.cogY * 100}%`,
+                        transform: 'translate(-50%,-50%)',
+                        zIndex: 4,
+                        width: 8,
+                        height: 8,
+                        borderRadius: '50%',
+                        background:
+                          load.xImbalance || load.yImbalance
+                            ? '#e04040'
+                            : '#38a169',
+                        border: '2px solid white',
+                        boxShadow: '0 0 4px rgba(0,0,0,0.4)',
+                      }}
+                    />
+
+                    {/* 박스들 (z 낮은 것 먼저, 높은 것이 위에 렌더링) */}
+                    {[...load.boxes]
+                      .sort((a, b) => a.z - b.z)
+                      .map((box, bi) => {
+                        const isHovered = hoveredBox === box;
+                        const px = box.x * scaleL,
+                          py = box.y * scaleW;
+                        const pw = box.l * scaleL,
+                          ph = box.w * scaleW;
+                        // z가 높을수록 약간 어둡게
+                        const opacity = 0.6 + (box.z / ct.height) * 0.4;
+                        return (
+                          <div
+                            key={bi}
+                            onMouseEnter={(e) => {
+                              setHoveredBox(box);
+                              setTooltipPos({ x: e.clientX, y: e.clientY });
+                            }}
+                            onMouseMove={(e) =>
+                              setTooltipPos({ x: e.clientX, y: e.clientY })
+                            }
+                            onMouseLeave={() => setHoveredBox(null)}
+                            style={{
+                              position: 'absolute',
+                              left: px,
+                              top: py,
+                              width: pw,
+                              height: ph,
+                              background: box.color,
+                              opacity,
+                              borderRadius: 2,
+                              cursor: 'pointer',
+                              overflow: 'hidden',
+                              border: isHovered
+                                ? '2px solid white'
+                                : '1px solid rgba(255,255,255,0.4)',
+                              boxShadow: isHovered
+                                ? '0 0 0 2px #1a1a2e'
+                                : 'none',
+                              zIndex: isHovered ? 20 : box.z + 1,
+                              transition: 'all 0.1s ease',
+                            }}
+                          >
+                            {pw > 20 && ph > 14 && (
+                              <div
+                                style={{
+                                  color: 'white',
+                                  fontSize: 7,
+                                  fontWeight: 700,
+                                  padding: 2,
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  whiteSpace: 'nowrap',
+                                }}
+                              >
+                                {box.cargoName || '화물'}
+                              </div>
+                            )}
+                            {box.noStack && (
+                              <div
+                                style={{
+                                  position: 'absolute',
+                                  top: 1,
+                                  right: 1,
+                                  background: '#fff0f0',
+                                  color: '#e04040',
+                                  fontSize: 5,
+                                  padding: '0 2px',
+                                  borderRadius: 1,
+                                  fontWeight: 800,
+                                }}
+                              >
+                                NO
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                  </div>
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      fontSize: 9,
+                      color: '#aaa',
+                      marginTop: 2,
+                    }}
+                  >
+                    <span>← 0</span>
+                    <span>{ct.length}cm →</span>
+                  </div>
+                </div>
+
+                {/* 측면도 (x-z 평면, 옆에서 봄) */}
+                <div>
+                  <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>
+                    📐 측면도 (옆에서)
+                  </div>
+                  <div
+                    style={{
+                      position: 'relative',
+                      width: DL + 4,
+                      height: DH + 4,
+                      background: '#f0fff4',
+                      border: '3px solid #38a169',
+                      borderRadius: 8,
+                      overflow: 'hidden',
+                    }}
+                  >
+                    {[...load.boxes]
+                      .sort((a, b) => a.y - b.y)
+                      .map((box, bi) => {
+                        const isHovered = hoveredBox === box;
+                        const px = box.x * scaleL;
+                        const pz = (ct.height - box.z - box.h) * scaleH; // z축 반전 (위가 높음)
+                        const pw = box.l * scaleL,
+                          ph = box.h * scaleH;
+                        const opacity = 0.5 + (box.y / ct.width) * 0.5;
+                        return (
+                          <div
+                            key={bi}
+                            onMouseEnter={(e) => {
+                              setHoveredBox(box);
+                              setTooltipPos({ x: e.clientX, y: e.clientY });
+                            }}
+                            onMouseMove={(e) =>
+                              setTooltipPos({ x: e.clientX, y: e.clientY })
+                            }
+                            onMouseLeave={() => setHoveredBox(null)}
+                            style={{
+                              position: 'absolute',
+                              left: px,
+                              top: pz,
+                              width: pw,
+                              height: ph,
+                              background: box.color,
+                              opacity,
+                              borderRadius: 2,
+                              cursor: 'pointer',
+                              overflow: 'hidden',
+                              border: isHovered
+                                ? '2px solid white'
+                                : '1px solid rgba(255,255,255,0.4)',
+                              boxShadow: isHovered
+                                ? '0 0 0 2px #1a1a2e'
+                                : 'none',
+                              zIndex: isHovered
+                                ? 20
+                                : 10 - Math.floor((box.y / ct.width) * 10),
+                              transition: 'all 0.1s ease',
+                            }}
+                          >
+                            {pw > 20 && ph > 14 && (
+                              <div
+                                style={{
+                                  color: 'white',
+                                  fontSize: 7,
+                                  fontWeight: 700,
+                                  padding: 2,
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  whiteSpace: 'nowrap',
+                                }}
+                              >
+                                {box.cargoName || '화물'}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                  </div>
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      fontSize: 9,
+                      color: '#aaa',
+                      marginTop: 2,
+                    }}
+                  >
+                    <span>← 0</span>
+                    <span>{ct.length}cm →</span>
+                  </div>
+                </div>
               </div>
 
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  fontSize: 10,
-                  color: '#aaa',
-                }}
-              >
-                <span>← 0cm</span>
-                <span>{ct.length}cm →</span>
+              <div style={{ fontSize: 10, color: '#aaa', marginTop: 4 }}>
+                💡 박스에 마우스를 올리면 상세 정보가 표시됩니다 · 상면도:
+                위에서 본 뷰 · 측면도: 옆에서 본 뷰
               </div>
             </div>
           );
@@ -1365,11 +1190,12 @@ export default function Home() {
             </table>
           </div>
         </div>
+
         <button
           onClick={handleReset}
           style={{
             width: '100%',
-            marginTop: 10,
+            marginBottom: 12,
             padding: 14,
             borderRadius: 8,
             border: '1px solid #e04040',
@@ -1415,7 +1241,7 @@ export default function Home() {
           </button>
         </div>
 
-        {hoveredCell && <StackTooltip cell={hoveredCell} />}
+        {hoveredBox && <BoxTooltip box={hoveredBox} />}
       </main>
     );
   }
@@ -1427,6 +1253,7 @@ export default function Home() {
         maxWidth: 960,
         margin: '0 auto',
         padding: 24,
+        position: 'relative',
       }}
     >
       <h1 style={{ fontSize: 24, fontWeight: 800, marginBottom: 4 }}>
@@ -1441,12 +1268,13 @@ export default function Home() {
           top: 10,
           right: 10,
           fontWeight: 'bold',
-          fontSize: '14px',
+          fontSize: 14,
           color: '#555',
         }}
       >
         MADE BY ZERO
       </div>
+
       <section
         style={{
           background: 'white',
@@ -1508,36 +1336,50 @@ export default function Home() {
             textTransform: 'uppercase',
           }}
         >
-          <div style={{ marginBottom: 16, display: 'flex', gap: 8 }}>
-            <input
-              value={quickInput}
-              onChange={(e) => setQuickInput(e.target.value)}
-              placeholder="예: 291x111x142(2)"
-              style={{
-                border: '1px solid #ddd',
-                padding: '8px 10px',
-                borderRadius: 6,
-                width: 220,
-              }}
-            />
-
-            <button
-              onClick={handleQuickAdd}
-              style={{
-                padding: '8px 12px',
-                background: '#4f8ef7',
-                color: 'white',
-                border: 'none',
-                borderRadius: 6,
-                cursor: 'pointer',
-                fontWeight: 700,
-              }}
-            >
-              추가
-            </button>
-          </div>
           화물 품목 입력
         </h2>
+
+        <div
+          style={{
+            marginBottom: 16,
+            display: 'flex',
+            gap: 8,
+            alignItems: 'center',
+          }}
+        >
+          <input
+            value={quickInput}
+            onChange={(e) => setQuickInput(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleQuickAdd()}
+            placeholder="예: 291x111x142(2), 100x80x60(5)"
+            style={{
+              border: '1px solid #ddd',
+              padding: '8px 10px',
+              borderRadius: 6,
+              width: 280,
+              fontSize: 13,
+            }}
+          />
+          <button
+            onClick={handleQuickAdd}
+            style={{
+              padding: '8px 14px',
+              background: '#4f8ef7',
+              color: 'white',
+              border: 'none',
+              borderRadius: 6,
+              cursor: 'pointer',
+              fontWeight: 700,
+              fontSize: 13,
+            }}
+          >
+            빠른 추가
+          </button>
+          <span style={{ fontSize: 11, color: '#aaa' }}>
+            쉼표로 여러 개 한번에 입력 가능
+          </span>
+        </div>
+
         <div style={{ overflowX: 'auto' }}>
           <table
             style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}
@@ -1690,7 +1532,7 @@ export default function Home() {
           cursor: 'pointer',
         }}
       >
-        🔍 최적 적재 계산하기
+        🔍 최적 적재 계산하기 (3D)
       </button>
     </main>
   );
@@ -1704,19 +1546,3 @@ const inputStyle: React.CSSProperties = {
   width: 90,
   outline: 'none',
 };
-// 🔥 정렬 함수 추가
-function sortCargoAdvanced(boxes: CargoItem[]) {
-  return [...boxes].sort((a, b) => {
-    if (a.noStack !== b.noStack) return a.noStack ? -1 : 1;
-
-    const volA = a.length * a.width * a.height;
-    const volB = b.length * b.width * b.height;
-    if (volB !== volA) return volB - volA;
-
-    if (b.weight !== a.weight) return b.weight - a.weight;
-
-    const maxA = Math.max(a.length, a.width, a.height);
-    const maxB = Math.max(b.length, b.width, b.height);
-    return maxB - maxA;
-  });
-}

@@ -522,17 +522,30 @@ export default function Home() {
       .map((item) => item.trim())
       .filter(Boolean)
       .map((item) => {
-        const match = item.match(/(\d+)\s*x\s*(\d+)\s*x\s*(\d+)\s*\((\d+)\)/i);
+        let cleaned = item.toLowerCase().trim();
 
-        if (!match) return null;
+        // 🔥 x, *, 공백 통일
+        cleaned = cleaned.replace(/[*x]/g, ' ');
+        cleaned = cleaned.replace(/\s+/g, ' ');
 
-        const [, length, width, height, quantity] = match;
+        // 🔥 (2) → 2
+        cleaned = cleaned.replace(/\((\d+)\)/, ' $1');
+
+        // 🔥 숫자만 추출
+        const numbers = cleaned.match(/\d+/g);
+
+        if (!numbers || numbers.length < 3) return null;
+
+        const length = Number(numbers[0]);
+        const width = Number(numbers[1]);
+        const height = Number(numbers[2]);
+        const quantity = numbers[3] ? Number(numbers[3]) : 1;
 
         return {
-          length: Number(length),
-          width: Number(width),
-          height: Number(height),
-          quantity: Number(quantity),
+          length,
+          width,
+          height,
+          quantity,
         };
       })
       .filter(Boolean) as {

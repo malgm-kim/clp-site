@@ -1435,7 +1435,18 @@ export default function Home() {
       <p style={{ color: '#888', marginBottom: 24 }}>
         화물을 입력하면 최적 컨테이너를 자동으로 선택해드립니다.
       </p>
-
+      <div
+        style={{
+          position: 'absolute',
+          top: 10,
+          right: 10,
+          fontWeight: 'bold',
+          fontSize: '14px',
+          color: '#555',
+        }}
+      >
+        MADE BY ZERO
+      </div>
       <section
         style={{
           background: 'white',

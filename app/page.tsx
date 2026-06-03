@@ -216,7 +216,7 @@ function getExtremePoints(
     add(b.x, b.y + b.w, b.z + b.h); // 박스 앞+위
   }
 
-  return [...pts]
+  return Array.from(pts)
     .map((s) => {
       const [x, y, z] = s.split(',').map(Number);
       return { x, y, z };

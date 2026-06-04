@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { supabase } from './lib/supabase';
 
 const CONTAINER_TYPES = [
   {
@@ -40,17 +41,16 @@ type CargoItem = {
   noStack: boolean;
 };
 
-// ✅ 3D 공간에 실제 배치된 박스
 type PlacedBox3D = {
   cargoId: number;
   cargoName: string;
   color: string;
   x: number;
   y: number;
-  z: number; // 시작 좌표
+  z: number;
   l: number;
   w: number;
-  h: number; // 실제 크기 (회전 반영)
+  h: number;
   weight: number;
   noStack: boolean;
 };
@@ -65,6 +65,22 @@ type ContainerLoad3D = {
   yImbalance: boolean;
 };
 
+type ClpRecord = {
+  id: string;
+  created_at: string;
+  title: string;
+  cargos: CargoItem[];
+  total_cbm: number;
+  total_weight: number;
+  container_count: number;
+  container_types: string[];
+};
+
+type User = {
+  id: string;
+  email: string;
+};
+
 const COLORS = [
   '#4f8ef7',
   '#38a169',
@@ -76,7 +92,6 @@ const COLORS = [
   '#7c3aed',
 ];
 
-// ✅ 가로세로 회전
 function getHorizontalRotations(
   l: number,
   w: number,
@@ -87,18 +102,39 @@ function getHorizontalRotations(
   return rotations;
 }
 
-// ✅ 두 박스가 x,y 평면에서 겹치는지
 function overlapsXY(
-  a: PlacedBox3D,
+  ax: number,
+  ay: number,
+  al: number,
+  aw: number,
   bx: number,
   by: number,
   bl: number,
   bw: number
 ): boolean {
-  return a.x < bx + bl && a.x + a.l > bx && a.y < by + bw && a.y + a.w > by;
+  return ax < bx + bl && ax + al > bx && ay < by + bw && ay + aw > by;
 }
 
-// ✅ 새 박스를 (x,y,z)에 놓을 수 있는지 체크
+function calcSupportArea(
+  boxes: PlacedBox3D[],
+  x: number,
+  y: number,
+  z: number,
+  l: number,
+  w: number
+): number {
+  let area = 0;
+  for (const b of boxes) {
+    if (Math.abs(b.z + b.h - z) > 0.1) continue;
+    const ox = Math.max(x, b.x),
+      oy = Math.max(y, b.y);
+    const ex = Math.min(x + l, b.x + b.l),
+      ey = Math.min(y + w, b.y + b.w);
+    if (ex > ox && ey > oy) area += (ex - ox) * (ey - oy);
+  }
+  return area;
+}
+
 function canPlace(
   boxes: PlacedBox3D[],
   x: number,
@@ -113,11 +149,8 @@ function canPlace(
   noStack: boolean,
   weight: number
 ): boolean {
-  // 컨테이너 범위 체크
   if (x + l > cL || y + w > cW || z + h > cH) return false;
   if (x < 0 || y < 0 || z < 0) return false;
-
-  // 다른 박스와 겹치는지 체크
   for (const b of boxes) {
     if (
       b.x < x + l &&
@@ -129,84 +162,57 @@ function canPlace(
     )
       return false;
   }
-
-  if (z === 0) return true; // 바닥이면 OK
-
-  // 지지면 체크: 아래 박스들이 새 박스 바닥을 충분히 받쳐주는지
-  const supportArea = calcSupportArea(boxes, x, y, z, l, w);
-  const requiredArea = l * w * 0.5; // 50% 이상 지지 필요
-  if (supportArea < requiredArea) return false;
-
-  // 다단불가 박스 위에 올리는지 체크
+  if (z === 0) return true;
+  if (calcSupportArea(boxes, x, y, z, l, w) < l * w * 0.5) return false;
   for (const b of boxes) {
-    if (b.noStack && overlapsXY(b, x, y, l, w) && b.z + b.h === z) return false;
+    if (
+      b.noStack &&
+      overlapsXY(x, y, l, w, b.x, b.y, b.l, b.w) &&
+      Math.abs(b.z + b.h - z) < 0.1
+    )
+      return false;
   }
-
-  // 하중 체크: 바로 아래 박스들의 허용 하중
-  const belowBoxes = boxes.filter(
-    (b) => overlapsXY(b, x, y, l, w) && b.z + b.h === z
-  );
-  for (const b of belowBoxes) {
-    const alreadyOnTop = boxes
-      .filter((ob) => overlapsXY(ob, b.x, b.y, b.l, b.w) && ob.z >= b.z + b.h)
+  for (const b of boxes) {
+    if (!overlapsXY(x, y, l, w, b.x, b.y, b.l, b.w)) continue;
+    if (Math.abs(b.z + b.h - z) > 0.1) continue;
+    const alreadyOn = boxes
+      .filter(
+        (ob) =>
+          overlapsXY(ob.x, ob.y, ob.l, ob.w, b.x, b.y, b.l, b.w) &&
+          ob.z >= b.z + b.h
+      )
       .reduce((s, ob) => s + ob.weight, 0);
-    if (alreadyOnTop + weight > b.weight) return false;
+    if (alreadyOn + weight > b.weight) return false;
   }
-
   return true;
 }
 
-// ✅ 지지 면적 계산 (아래 박스들과의 겹치는 면적 합산)
-function calcSupportArea(
-  boxes: PlacedBox3D[],
-  x: number,
-  y: number,
-  z: number,
-  l: number,
-  w: number
-): number {
-  let area = 0;
-  const belowBoxes = boxes.filter((b) => b.z + b.h === z);
-  for (const b of belowBoxes) {
-    const ox = Math.max(x, b.x);
-    const oy = Math.max(y, b.y);
-    const ex = Math.min(x + l, b.x + b.l);
-    const ey = Math.min(y + w, b.y + b.w);
-    if (ex > ox && ey > oy) area += (ex - ox) * (ey - oy);
-  }
-  return area;
-}
-
-// ✅ Extreme Points 생성
 function getExtremePoints(
   boxes: PlacedBox3D[],
   cL: number,
   cW: number,
   cH: number
-): { x: number; y: number; z: number }[] {
+) {
   const pts = new Set<string>();
   const add = (x: number, y: number, z: number) => {
     if (x >= 0 && y >= 0 && z >= 0 && x < cL && y < cW && z < cH)
-      pts.add(`${x},${y},${z}`);
+      pts.add(`${Math.round(x)},${Math.round(y)},${Math.round(z)}`);
   };
-
-  add(0, 0, 0); // 원점
-
+  add(0, 0, 0);
   for (const b of boxes) {
-    add(b.x + b.l, b.y, b.z); // 박스 오른쪽
-    add(b.x, b.y + b.w, b.z); // 박스 앞쪽
-    add(b.x, b.y, b.z + b.h); // 박스 위쪽
-    add(b.x + b.l, b.y + b.w, b.z); // 박스 오른쪽+앞
-    add(b.x + b.l, b.y, b.z + b.h); // 박스 오른쪽+위
-    add(b.x, b.y + b.w, b.z + b.h); // 박스 앞+위
+    add(b.x + b.l, b.y, b.z);
+    add(b.x, b.y + b.w, b.z);
+    add(b.x, b.y, b.z + b.h);
+    add(b.x + b.l, b.y + b.w, b.z);
+    add(b.x + b.l, b.y, b.z + b.h);
+    add(b.x, b.y + b.w, b.z + b.h);
   }
-
-  return [...pts]
+  return Array.from(pts)
     .map((s) => {
       const [x, y, z] = s.split(',').map(Number);
       return { x, y, z };
     })
-    .sort((a, b) => a.z - b.z || a.x - b.x || a.y - b.y); // z 낮은 것 우선
+    .sort((a, b) => a.z - b.z || a.x - b.x || a.y - b.y);
 }
 
 function calcCOG(boxes: PlacedBox3D[], cL: number, cW: number) {
@@ -222,7 +228,6 @@ function calcCOG(boxes: PlacedBox3D[], cL: number, cW: number) {
   return { x: wx / tw / cL, y: wy / tw / cW };
 }
 
-// ✅ 바닥 면적 기준 정렬
 function sortCargos(boxes: CargoItem[]): CargoItem[] {
   return [...boxes].sort((a, b) => {
     if (a.noStack !== b.noStack) return a.noStack ? -1 : 1;
@@ -234,7 +239,6 @@ function sortCargos(boxes: CargoItem[]): CargoItem[] {
   });
 }
 
-// ✅ 단일 컨테이너에 3D 패킹
 function pack3D(
   cargoList: CargoItem[],
   cargos: CargoItem[],
@@ -242,20 +246,15 @@ function pack3D(
 ): { boxes: PlacedBox3D[]; remaining: CargoItem[] } {
   const placed: PlacedBox3D[] = [];
   const remaining: CargoItem[] = [];
-
   for (const cargo of cargoList) {
     const colorIdx = cargos.findIndex((c) => c.id === cargo.id);
     const color = COLORS[colorIdx % COLORS.length];
-    let boxPlaced = false;
-
     const rotations = getHorizontalRotations(
       cargo.length,
       cargo.width,
       cargo.height
     );
     const eps = getExtremePoints(placed, ct.length, ct.width, ct.height);
-
-    // Best Fit: 모든 EP × 모든 회전 중 가장 좋은 위치 찾기
     let best: {
       x: number;
       y: number;
@@ -265,7 +264,6 @@ function pack3D(
       h: number;
       score: number;
     } | null = null;
-
     for (const ep of eps) {
       for (const [rl, rw, rh] of rotations) {
         if (
@@ -285,15 +283,11 @@ function pack3D(
           )
         )
           continue;
-
-        // 점수: z 낮을수록, x 낮을수록, y 낮을수록 좋음
         const score = ep.z * 10000 + ep.x * 100 + ep.y;
-        if (!best || score < best.score) {
+        if (!best || score < best.score)
           best = { x: ep.x, y: ep.y, z: ep.z, l: rl, w: rw, h: rh, score };
-        }
       }
     }
-
     if (best) {
       placed.push({
         cargoId: cargo.id,
@@ -308,12 +302,10 @@ function pack3D(
         weight: cargo.weight,
         noStack: cargo.noStack,
       });
-      boxPlaced = true;
+    } else {
+      remaining.push(cargo);
     }
-
-    if (!boxPlaced) remaining.push(cargo);
   }
-
   return { boxes: placed, remaining };
 }
 
@@ -322,9 +314,8 @@ function buildContainerLoads(cargos: CargoItem[]): ContainerLoad3D[] {
     Array.from({ length: c.quantity }, () => ({ ...c, quantity: 1 }))
   );
   const loads: ContainerLoad3D[] = [];
-  let containerId = 0;
-  let safety = 0;
-
+  let containerId = 0,
+    safety = 0;
   while (remaining.length > 0 && safety < 50) {
     safety++;
     const totalCbm = remaining.reduce(
@@ -332,7 +323,6 @@ function buildContainerLoads(cargos: CargoItem[]): ContainerLoad3D[] {
       0
     );
     const totalWeight = remaining.reduce((s, c) => s + c.weight, 0);
-
     let selectedCt = CONTAINER_TYPES[0];
     for (const ct of CONTAINER_TYPES) {
       if (totalCbm <= ct.maxCbm * 0.92 && totalWeight <= ct.maxWeight) {
@@ -340,15 +330,15 @@ function buildContainerLoads(cargos: CargoItem[]): ContainerLoad3D[] {
         break;
       }
     }
-
-    const sorted = sortCargos(remaining);
-    const { boxes, remaining: leftover } = pack3D(sorted, cargos, selectedCt);
-
+    const { boxes, remaining: leftover } = pack3D(
+      sortCargos(remaining),
+      cargos,
+      selectedCt
+    );
     if (boxes.length === 0) {
       remaining = leftover.slice(1);
       continue;
     }
-
     const cog = calcCOG(boxes, selectedCt.length, selectedCt.width);
     loads.push({
       containerId: containerId++,
@@ -365,6 +355,19 @@ function buildContainerLoads(cargos: CargoItem[]): ContainerLoad3D[] {
 }
 
 export default function Home() {
+  const [user, setUser] = useState<User | null>(null);
+  const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
+  const [showAuth, setShowAuth] = useState(false);
+  const [records, setRecords] = useState<ClpRecord[]>([]);
+  const [showRecords, setShowRecords] = useState(false);
+  const [saveTitle, setSaveTitle] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+
   const [quickInput, setQuickInput] = useState('');
   const [cargos, setCargos] = useState<CargoItem[]>([
     {
@@ -382,6 +385,111 @@ export default function Home() {
   const [containerLoads, setContainerLoads] = useState<ContainerLoad3D[]>([]);
   const [hoveredBox, setHoveredBox] = useState<PlacedBox3D | null>(null);
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
+
+  // 로그인 상태 확인
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user)
+        setUser({ id: session.user.id, email: session.user.email! });
+    });
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_, session) => {
+      if (session?.user)
+        setUser({ id: session.user.id, email: session.user.email! });
+      else setUser(null);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // 로그인
+  const handleLogin = async () => {
+    setAuthLoading(true);
+    setAuthError('');
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+    if (error) setAuthError(error.message);
+    else setShowAuth(false);
+    setAuthLoading(false);
+  };
+
+  // 회원가입
+  const handleSignup = async () => {
+    setAuthLoading(true);
+    setAuthError('');
+    const { error } = await supabase.auth.signUp({ email, password });
+    if (error) setAuthError(error.message);
+    else setAuthError('이메일을 확인해주세요! 인증 후 로그인 가능합니다.');
+    setAuthLoading(false);
+  };
+
+  // 로그아웃
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+  };
+
+  // CLP 저장
+  const handleSave = async () => {
+    if (!user) {
+      setShowAuth(true);
+      return;
+    }
+    setSaving(true);
+    const totalCbm = cargos.reduce(
+      (s, c) =>
+        s + (c.length / 100) * (c.width / 100) * (c.height / 100) * c.quantity,
+      0
+    );
+    const totalWeight = cargos.reduce((s, c) => s + c.weight * c.quantity, 0);
+    const { error } = await supabase.from('clp_records').insert({
+      user_id: user.id,
+      title: saveTitle || `CLP ${new Date().toLocaleDateString('ko-KR')}`,
+      cargos,
+      results: containerLoads,
+      total_cbm: totalCbm,
+      total_weight: totalWeight,
+      container_count: containerLoads.length,
+      container_types: [
+        ...new Set(containerLoads.map((l) => l.containerType.name)),
+      ],
+    });
+    if (!error) {
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
+    }
+    setSaving(false);
+  };
+
+  // 기록 불러오기
+  const loadRecords = async () => {
+    if (!user) {
+      setShowAuth(true);
+      return;
+    }
+    const { data } = await supabase
+      .from('clp_records')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(20);
+    if (data) setRecords(data);
+    setShowRecords(true);
+  };
+
+  // 기록 불러와서 입력창에 세팅
+  const loadRecord = (record: ClpRecord) => {
+    setCargos(record.cargos);
+    setShowRecords(false);
+    setPage('input');
+  };
+
+  // 기록 삭제
+  const deleteRecord = async (id: string) => {
+    await supabase.from('clp_records').delete().eq('id', id);
+    setRecords((prev) => prev.filter((r) => r.id !== id));
+  };
 
   const handleReset = () => {
     setCargos([
@@ -475,7 +583,6 @@ export default function Home() {
     setPage('result');
   };
 
-  // 박스 툴팁
   const BoxTooltip = ({ box }: { box: PlacedBox3D }) => (
     <div
       style={{
@@ -533,7 +640,304 @@ export default function Home() {
         <div>
           위치: X={box.x}cm / Y={box.y}cm / Z={box.z}cm
         </div>
-        <div>허용 하중: {box.weight}kg</div>
+      </div>
+    </div>
+  );
+
+  // 로그인 모달
+  const AuthModal = () => (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.5)',
+        zIndex: 1000,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      <div
+        style={{
+          background: 'white',
+          borderRadius: 16,
+          padding: 32,
+          width: 360,
+          boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+        }}
+      >
+        <h2 style={{ fontSize: 20, fontWeight: 800, marginBottom: 4 }}>
+          {authMode === 'login' ? '🔐 로그인' : '📝 회원가입'}
+        </h2>
+        <p style={{ fontSize: 12, color: '#aaa', marginBottom: 24 }}>
+          CLP 기록을 저장하고 불러올 수 있어요
+        </p>
+
+        <div style={{ marginBottom: 12 }}>
+          <label
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              color: '#555',
+              display: 'block',
+              marginBottom: 4,
+            }}
+          >
+            이메일
+          </label>
+          <input
+            id="email"
+            name="email"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="example@email.com"
+            style={{
+              width: '100%',
+              padding: '10px 12px',
+              borderRadius: 8,
+              border: '1px solid #ddd',
+              fontSize: 13,
+              outline: 'none',
+              boxSizing: 'border-box',
+            }}
+          />
+        </div>
+        <div style={{ marginBottom: 16 }}>
+          <label
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              color: '#555',
+              display: 'block',
+              marginBottom: 4,
+            }}
+          >
+            비밀번호
+          </label>
+          <input
+            id="password"
+            name="password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="6자리 이상"
+            onKeyDown={(e) =>
+              e.key === 'Enter' &&
+              (authMode === 'login' ? handleLogin() : handleSignup())
+            }
+            style={{
+              width: '100%',
+              padding: '10px 12px',
+              borderRadius: 8,
+              border: '1px solid #ddd',
+              fontSize: 13,
+              outline: 'none',
+              boxSizing: 'border-box',
+            }}
+          />
+        </div>
+
+        {authError && (
+          <div
+            style={{
+              background: '#fff0f0',
+              color: '#e04040',
+              fontSize: 12,
+              padding: '8px 12px',
+              borderRadius: 8,
+              marginBottom: 12,
+            }}
+          >
+            {authError}
+          </div>
+        )}
+
+        <button
+          onClick={authMode === 'login' ? handleLogin : handleSignup}
+          disabled={authLoading}
+          style={{
+            width: '100%',
+            padding: 12,
+            borderRadius: 8,
+            border: 'none',
+            background: '#4f8ef7',
+            color: 'white',
+            fontWeight: 700,
+            fontSize: 14,
+            cursor: 'pointer',
+            marginBottom: 10,
+          }}
+        >
+          {authLoading
+            ? '처리중...'
+            : authMode === 'login'
+            ? '로그인'
+            : '회원가입'}
+        </button>
+
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}
+        >
+          <button
+            onClick={() => {
+              setAuthMode(authMode === 'login' ? 'signup' : 'login');
+              setAuthError('');
+            }}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: '#4f8ef7',
+              fontSize: 12,
+              cursor: 'pointer',
+              fontWeight: 600,
+            }}
+          >
+            {authMode === 'login'
+              ? '계정이 없으신가요? 회원가입'
+              : '이미 계정이 있으신가요? 로그인'}
+          </button>
+          <button
+            onClick={() => {
+              setShowAuth(false);
+              setAuthError('');
+            }}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: '#aaa',
+              fontSize: 12,
+              cursor: 'pointer',
+            }}
+          >
+            닫기
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  // 기록 모달
+  const RecordsModal = () => (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.5)',
+        zIndex: 1000,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      <div
+        style={{
+          background: 'white',
+          borderRadius: 16,
+          padding: 28,
+          width: 560,
+          maxHeight: '80vh',
+          overflow: 'auto',
+          boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: 20,
+          }}
+        >
+          <h2 style={{ fontSize: 18, fontWeight: 800 }}>📋 내 CLP 기록</h2>
+          <button
+            onClick={() => setShowRecords(false)}
+            style={{
+              background: 'none',
+              border: 'none',
+              fontSize: 20,
+              cursor: 'pointer',
+              color: '#aaa',
+            }}
+          >
+            ✕
+          </button>
+        </div>
+
+        {records.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: 40, color: '#aaa' }}>
+            저장된 기록이 없어요
+          </div>
+        ) : (
+          records.map((r) => (
+            <div
+              key={r.id}
+              style={{
+                border: '1px solid #eee',
+                borderRadius: 10,
+                padding: 16,
+                marginBottom: 12,
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'flex-start',
+                }}
+              >
+                <div>
+                  <div
+                    style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}
+                  >
+                    {r.title}
+                  </div>
+                  <div style={{ fontSize: 12, color: '#888' }}>
+                    {new Date(r.created_at).toLocaleDateString('ko-KR')}{' '}
+                    &nbsp;·&nbsp; 컨테이너 {r.container_count}개 &nbsp;·&nbsp;
+                    {r.total_cbm?.toFixed(2)} CBM &nbsp;·&nbsp;
+                    {r.container_types?.join(', ')}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    onClick={() => loadRecord(r)}
+                    style={{
+                      padding: '6px 14px',
+                      borderRadius: 6,
+                      border: '1px solid #4f8ef7',
+                      background: 'white',
+                      color: '#4f8ef7',
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    불러오기
+                  </button>
+                  <button
+                    onClick={() => deleteRecord(r.id)}
+                    style={{
+                      padding: '6px 12px',
+                      borderRadius: 6,
+                      border: '1px solid #e04040',
+                      background: 'white',
+                      color: '#e04040',
+                      fontSize: 12,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    삭제
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))
+        )}
       </div>
     </div>
   );
@@ -546,8 +950,7 @@ export default function Home() {
     }));
     const DL = 660,
       DW = 180,
-      DH = 120; // 상면도/측면도 표시 크기
-
+      DH = 120;
     const summary = CONTAINER_TYPES.map((ct) => ({
       ...ct,
       count: containerLoads.filter((l) => l.containerType.name === ct.name)
@@ -563,12 +966,131 @@ export default function Home() {
           padding: 24,
         }}
       >
-        <h1 style={{ fontSize: 24, fontWeight: 800, marginBottom: 4 }}>
-          📊 적재 계산 결과
-        </h1>
-        <p style={{ color: '#888', marginBottom: 24 }}>
-          3D Extreme Points · 6방향 회전 · 자동 컨테이너 선택
-        </p>
+        {/* 상단 바 */}
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: 20,
+          }}
+        >
+          <div>
+            <h1 style={{ fontSize: 24, fontWeight: 800, marginBottom: 4 }}>
+              📊 적재 계산 결과
+            </h1>
+            <p style={{ color: '#888' }}>
+              3D Extreme Points · 바닥면 고정 회전 · 자동 컨테이너 선택
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            {user ? (
+              <>
+                <span style={{ fontSize: 12, color: '#888' }}>
+                  {user.email}
+                </span>
+                <button
+                  onClick={loadRecords}
+                  style={{
+                    padding: '8px 14px',
+                    borderRadius: 8,
+                    border: '1px solid #4f8ef7',
+                    background: 'white',
+                    color: '#4f8ef7',
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                  }}
+                >
+                  📋 내 기록
+                </button>
+                <button
+                  onClick={handleLogout}
+                  style={{
+                    padding: '8px 14px',
+                    borderRadius: 8,
+                    border: '1px solid #ddd',
+                    background: 'white',
+                    color: '#888',
+                    fontSize: 12,
+                    cursor: 'pointer',
+                  }}
+                >
+                  로그아웃
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => setShowAuth(true)}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: 8,
+                  border: 'none',
+                  background: '#4f8ef7',
+                  color: 'white',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                🔐 로그인
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* 저장 섹션 */}
+        {user && (
+          <div
+            style={{
+              background: 'white',
+              borderRadius: 12,
+              padding: 16,
+              marginBottom: 20,
+              boxShadow: '0 2px 8px rgba(0,0,0,0.07)',
+              display: 'flex',
+              gap: 10,
+              alignItems: 'center',
+            }}
+          >
+            <input
+              id="saveTitle"
+              name="saveTitle"
+              value={saveTitle}
+              onChange={(e) => setSaveTitle(e.target.value)}
+              placeholder="저장할 CLP 이름 (선택사항)"
+              style={{
+                flex: 1,
+                padding: '8px 12px',
+                borderRadius: 8,
+                border: '1px solid #ddd',
+                fontSize: 13,
+                outline: 'none',
+              }}
+            />
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              style={{
+                padding: '8px 20px',
+                borderRadius: 8,
+                border: 'none',
+                background: saveSuccess ? '#38a169' : '#4f8ef7',
+                color: 'white',
+                fontWeight: 700,
+                fontSize: 13,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {saving
+                ? '저장 중...'
+                : saveSuccess
+                ? '✅ 저장됨'
+                : '💾 저장하기'}
+            </button>
+          </div>
+        )}
 
         {/* 요약 카드 */}
         <div
@@ -654,7 +1176,6 @@ export default function Home() {
                 boxShadow: '0 2px 8px rgba(0,0,0,0.07)',
               }}
             >
-              {/* 헤더 */}
               <div
                 style={{
                   display: 'flex',
@@ -755,9 +1276,8 @@ export default function Home() {
                 />
               </div>
 
-              {/* 상면도 + 측면도 */}
               <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
-                {/* 상면도 (x-y 평면, 위에서 내려다봄) */}
+                {/* 상면도 */}
                 <div>
                   <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>
                     📐 상면도 (위에서)
@@ -786,8 +1306,6 @@ export default function Home() {
                     >
                       {ct.name}
                     </div>
-
-                    {/* 무게중심 */}
                     <div
                       style={{
                         position: 'absolute',
@@ -830,8 +1348,6 @@ export default function Home() {
                         boxShadow: '0 0 4px rgba(0,0,0,0.4)',
                       }}
                     />
-
-                    {/* 박스들 (z 낮은 것 먼저, 높은 것이 위에 렌더링) */}
                     {[...load.boxes]
                       .sort((a, b) => a.z - b.z)
                       .map((box, bi) => {
@@ -840,7 +1356,6 @@ export default function Home() {
                           py = box.y * scaleW;
                         const pw = box.l * scaleL,
                           ph = box.w * scaleW;
-                        // z가 높을수록 약간 어둡게
                         const opacity = 0.6 + (box.z / ct.height) * 0.4;
                         return (
                           <div
@@ -924,7 +1439,7 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* 측면도 (x-z 평면, 옆에서 봄) */}
+                {/* 측면도 */}
                 <div>
                   <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>
                     📐 측면도 (옆에서)
@@ -945,7 +1460,7 @@ export default function Home() {
                       .map((box, bi) => {
                         const isHovered = hoveredBox === box;
                         const px = box.x * scaleL;
-                        const pz = (ct.height - box.z - box.h) * scaleH; // z축 반전 (위가 높음)
+                        const pz = (ct.height - box.z - box.h) * scaleH;
                         const pw = box.l * scaleL,
                           ph = box.h * scaleH;
                         const opacity = 0.5 + (box.y / ct.width) * 0.5;
@@ -965,7 +1480,7 @@ export default function Home() {
                               left: px,
                               top: pz,
                               width: pw,
-                              height: ph,
+                              height: Math.max(ph, 1),
                               background: box.color,
                               opacity,
                               borderRadius: 2,
@@ -1016,10 +1531,9 @@ export default function Home() {
                   </div>
                 </div>
               </div>
-
-              <div style={{ fontSize: 10, color: '#aaa', marginTop: 4 }}>
-                💡 박스에 마우스를 올리면 상세 정보가 표시됩니다 · 상면도:
-                위에서 본 뷰 · 측면도: 옆에서 본 뷰
+              <div style={{ fontSize: 10, color: '#aaa' }}>
+                💡 박스에 마우스를 올리면 상세 정보 · 상면도: 위에서 본 뷰 ·
+                측면도: 옆에서 본 뷰
               </div>
             </div>
           );
@@ -1231,6 +1745,8 @@ export default function Home() {
         </div>
 
         {hoveredBox && <BoxTooltip box={hoveredBox} />}
+        {showAuth && <AuthModal />}
+        {showRecords && <RecordsModal />}
       </main>
     );
   }
@@ -1245,23 +1761,78 @@ export default function Home() {
         position: 'relative',
       }}
     >
-      <h1 style={{ fontSize: 24, fontWeight: 800, marginBottom: 4 }}>
-        🚢 Container Load Plan
-      </h1>
-      <p style={{ color: '#888', marginBottom: 24 }}>
-        화물을 입력하면 최적 컨테이너를 자동으로 선택해드립니다.
-      </p>
+      {/* 상단 바 */}
       <div
         style={{
-          position: 'absolute',
-          top: 10,
-          right: 10,
-          fontWeight: 'bold',
-          fontSize: 14,
-          color: '#555',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'flex-start',
+          marginBottom: 20,
         }}
       >
-        MADE BY ZERO
+        <div>
+          <h1 style={{ fontSize: 24, fontWeight: 800, marginBottom: 4 }}>
+            🚢 Container Load Plan
+          </h1>
+          <p style={{ color: '#888' }}>
+            화물을 입력하면 최적 컨테이너를 자동으로 선택해드립니다.
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          {user ? (
+            <>
+              <span style={{ fontSize: 12, color: '#888' }}>{user.email}</span>
+              <button
+                onClick={loadRecords}
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: 8,
+                  border: '1px solid #4f8ef7',
+                  background: 'white',
+                  color: '#4f8ef7',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                📋 내 기록
+              </button>
+              <button
+                onClick={handleLogout}
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: 8,
+                  border: '1px solid #ddd',
+                  background: 'white',
+                  color: '#888',
+                  fontSize: 12,
+                  cursor: 'pointer',
+                }}
+              >
+                로그아웃
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={() => setShowAuth(true)}
+              style={{
+                padding: '8px 16px',
+                borderRadius: 8,
+                border: 'none',
+                background: '#4f8ef7',
+                color: 'white',
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+            >
+              🔐 로그인 / 회원가입
+            </button>
+          )}
+          <div style={{ fontWeight: 'bold', fontSize: 14, color: '#555' }}>
+            MADE BY ZERO
+          </div>
+        </div>
       </div>
 
       <section
@@ -1298,7 +1869,7 @@ export default function Home() {
                 fontSize: 12,
               }}
             >
-              <strong>{ct.name}</strong> &nbsp;
+              <strong>{ct.name}</strong>&nbsp;
               <span style={{ color: '#888' }}>
                 최대 {ct.maxCbm} CBM / {ct.maxWeight.toLocaleString()} kg
               </span>
@@ -1327,7 +1898,6 @@ export default function Home() {
         >
           화물 품목 입력
         </h2>
-
         <div
           style={{
             marginBottom: 16,
@@ -1337,6 +1907,8 @@ export default function Home() {
           }}
         >
           <input
+            id="quickInput"
+            name="quickInput"
             value={quickInput}
             onChange={(e) => setQuickInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleQuickAdd()}
@@ -1406,6 +1978,8 @@ export default function Home() {
                 <tr key={c.id}>
                   <td style={{ padding: '8px 10px' }}>
                     <input
+                      id={`name-${c.id}`}
+                      name={`name-${c.id}`}
                       value={c.name}
                       onChange={(e) =>
                         updateCargo(c.id, 'name', e.target.value)
@@ -1419,6 +1993,8 @@ export default function Home() {
                   ).map((field) => (
                     <td key={field} style={{ padding: '8px 10px' }}>
                       <input
+                        id={`${field}-${c.id}`}
+                        name={`${field}-${c.id}`}
                         type="number"
                         value={c[field] || ''}
                         onChange={(e) =>
@@ -1521,8 +2097,11 @@ export default function Home() {
           cursor: 'pointer',
         }}
       >
-        🔍 최적 적재 계산하기 (3D)
+        🔍 최적 적재 계산하기
       </button>
+
+      {showAuth && <AuthModal />}
+      {showRecords && <RecordsModal />}
     </main>
   );
 }

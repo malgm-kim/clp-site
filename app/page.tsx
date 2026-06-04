@@ -76,30 +76,15 @@ const COLORS = [
   '#7c3aed',
 ];
 
-// ✅ 6방향 회전 (height 작은 것 우선)
-function get6Rotations(
+// ✅ 가로세로 회전
+function getHorizontalRotations(
   l: number,
   w: number,
   h: number
 ): [number, number, number][] {
-  const seen = new Set<string>();
-  return (
-    [
-      [l, w, h],
-      [w, l, h],
-      [l, h, w],
-      [h, l, w],
-      [w, h, l],
-      [h, w, l],
-    ] as [number, number, number][]
-  )
-    .filter(([a, b, c]) => {
-      const k = `${a},${b},${c}`;
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return true;
-    })
-    .sort((a, b) => a[2] - b[2]); // height 작은 것 우선
+  const rotations: [number, number, number][] = [[l, w, h]];
+  if (l !== w) rotations.push([w, l, h]);
+  return rotations;
 }
 
 // ✅ 두 박스가 x,y 평면에서 겹치는지
@@ -216,7 +201,7 @@ function getExtremePoints(
     add(b.x, b.y + b.w, b.z + b.h); // 박스 앞+위
   }
 
-  return Array.from(pts)
+  return [...pts]
     .map((s) => {
       const [x, y, z] = s.split(',').map(Number);
       return { x, y, z };
@@ -263,7 +248,11 @@ function pack3D(
     const color = COLORS[colorIdx % COLORS.length];
     let boxPlaced = false;
 
-    const rotations = get6Rotations(cargo.length, cargo.width, cargo.height);
+    const rotations = getHorizontalRotations(
+      cargo.length,
+      cargo.width,
+      cargo.height
+    );
     const eps = getExtremePoints(placed, ct.length, ct.width, ct.height);
 
     // Best Fit: 모든 EP × 모든 회전 중 가장 좋은 위치 찾기

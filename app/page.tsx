@@ -452,9 +452,7 @@ export default function Home() {
       total_cbm: totalCbm,
       total_weight: totalWeight,
       container_count: containerLoads.length,
-      container_types: [
-        ...new Set(containerLoads.map((l) => l.containerType.name)),
-      ],
+    container_types: Array.from(new Set(containerLoads.map((l) => l.containerType.name))),
     });
     if (!error) {
       setSaveSuccess(true);

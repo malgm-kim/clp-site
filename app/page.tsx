@@ -13,14 +13,6 @@ const CONTAINER_TYPES = [
     maxWeight: 26680,
   },
   {
-    name: '40GP',
-    length: 1200,
-    width: 235,
-    height: 239,
-    maxCbm: 67.7,
-    maxWeight: 26680,
-  },
-  {
     name: '20GP',
     length: 589,
     width: 235,
@@ -163,7 +155,8 @@ function canPlace(
       return false;
   }
   if (z === 0) return true;
-  if (calcSupportArea(boxes, x, y, z, l, w) < l * w * 0.5) return false;
+  // 지지면 체크 완화: 30% 이상이면 허용
+  if (calcSupportArea(boxes, x, y, z, l, w) < l * w * 0.3) return false;
   for (const b of boxes) {
     if (
       b.noStack &&
@@ -198,15 +191,37 @@ function getExtremePoints(
     if (x >= 0 && y >= 0 && z >= 0 && x < cL && y < cW && z < cH)
       pts.add(`${Math.round(x)},${Math.round(y)},${Math.round(z)}`);
   };
+
   add(0, 0, 0);
+
   for (const b of boxes) {
+    // 기본 꼭짓점
     add(b.x + b.l, b.y, b.z);
     add(b.x, b.y + b.w, b.z);
     add(b.x, b.y, b.z + b.h);
     add(b.x + b.l, b.y + b.w, b.z);
     add(b.x + b.l, b.y, b.z + b.h);
     add(b.x, b.y + b.w, b.z + b.h);
+    add(b.x + b.l, b.y + b.w, b.z + b.h);
+
+    // ✅ 투영점: 다른 박스 면에 현재 박스 좌표를 투영
+    for (const o of boxes) {
+      if (o === b) continue;
+      // x 투영
+      add(b.x + b.l, o.y, b.z);
+      add(b.x + b.l, o.y + o.w, b.z);
+      add(b.x + b.l, o.y, b.z + b.h);
+      // y 투영
+      add(b.x, b.y + b.w, o.z);
+      add(b.x + b.l, b.y + b.w, o.z);
+      add(b.x, b.y + b.w, o.z + o.h);
+      // z 투영
+      add(b.x, o.y, b.z + b.h);
+      add(b.x + b.l, o.y, b.z + b.h);
+      add(b.x, o.y + o.w, b.z + b.h);
+    }
   }
+
   return Array.from(pts)
     .map((s) => {
       const [x, y, z] = s.split(',').map(Number);
@@ -310,48 +325,107 @@ function pack3D(
 }
 
 function buildContainerLoads(cargos: CargoItem[]): ContainerLoad3D[] {
-  let remaining = [...cargos].flatMap((c) =>
-    Array.from({ length: c.quantity }, () => ({ ...c, quantity: 1 }))
-  );
-  const loads: ContainerLoad3D[] = [];
-  let containerId = 0,
-    safety = 0;
-  while (remaining.length > 0 && safety < 50) {
-    safety++;
-    const totalCbm = remaining.reduce(
-      (s, c) => s + (c.length / 100) * (c.width / 100) * (c.height / 100),
-      0
+  const ct20GP = CONTAINER_TYPES.find((ct) => ct.name === '20GP')!;
+  const ct40HQ = CONTAINER_TYPES.find((ct) => ct.name === '40HQ')!;
+
+  // ✅ 여러 정렬 전략 정의
+  const strategies = [
+    // 전략 1: 바닥 면적 큰 것 먼저 (기존)
+    (boxes: CargoItem[]) =>
+      [...boxes].sort((a, b) => {
+        if (a.noStack !== b.noStack) return a.noStack ? -1 : 1;
+        return b.length * b.width - a.length * a.width;
+      }),
+    // 전략 2: 부피 큰 것 먼저
+    (boxes: CargoItem[]) =>
+      [...boxes].sort((a, b) => {
+        if (a.noStack !== b.noStack) return a.noStack ? -1 : 1;
+        return b.length * b.width * b.height - a.length * a.width * a.height;
+      }),
+    // 전략 3: 높이 큰 것 먼저
+    (boxes: CargoItem[]) =>
+      [...boxes].sort((a, b) => {
+        if (a.noStack !== b.noStack) return a.noStack ? -1 : 1;
+        return b.height - a.height;
+      }),
+    // 전략 4: 작은 것 먼저 (빈틈 채우기)
+    (boxes: CargoItem[]) =>
+      [...boxes].sort((a, b) => {
+        if (a.noStack !== b.noStack) return a.noStack ? -1 : 1;
+        return a.length * a.width * a.height - b.length * b.width * b.height;
+      }),
+    // 전략 5: 긴 것 먼저
+    (boxes: CargoItem[]) =>
+      [...boxes].sort((a, b) => {
+        if (a.noStack !== b.noStack) return a.noStack ? -1 : 1;
+        return Math.max(b.length, b.width) - Math.max(a.length, a.width);
+      }),
+  ];
+
+  // ✅ 단일 전략으로 전체 패킹 실행
+  const runPacking = (
+    strategy: (boxes: CargoItem[]) => CargoItem[]
+  ): ContainerLoad3D[] => {
+    let remaining = [...cargos].flatMap((c) =>
+      Array.from({ length: c.quantity }, () => ({ ...c, quantity: 1 }))
     );
-    const totalWeight = remaining.reduce((s, c) => s + c.weight, 0);
-    let selectedCt = CONTAINER_TYPES[0];
-    for (const ct of CONTAINER_TYPES) {
-      if (totalCbm <= ct.maxCbm * 0.92 && totalWeight <= ct.maxWeight) {
-        selectedCt = ct;
-        break;
+    const loads: ContainerLoad3D[] = [];
+    let containerId = 0,
+      safety = 0;
+
+    while (remaining.length > 0 && safety < 50) {
+      safety++;
+      const totalCbm = remaining.reduce(
+        (s, c) => s + (c.length / 100) * (c.width / 100) * (c.height / 100),
+        0
+      );
+      const totalWeight = remaining.reduce((s, c) => s + c.weight, 0);
+
+      // 컨테이너 선택
+      let selectedCt: (typeof CONTAINER_TYPES)[number];
+      if (totalCbm <= ct20GP.maxCbm * 0.92 && totalWeight <= ct20GP.maxWeight) {
+        selectedCt = ct20GP;
+      } else {
+        selectedCt = ct40HQ;
       }
+
+      const sorted = strategy(remaining);
+      const { boxes, remaining: leftover } = pack3D(sorted, cargos, selectedCt);
+
+      if (boxes.length === 0) {
+        remaining = leftover.slice(1);
+        continue;
+      }
+
+      const cog = calcCOG(boxes, selectedCt.length, selectedCt.width);
+      loads.push({
+        containerId: containerId++,
+        containerType: selectedCt,
+        boxes,
+        cogX: cog.x,
+        cogY: cog.y,
+        xImbalance: Math.abs(cog.x - 0.5) > 0.1,
+        yImbalance: Math.abs(cog.y - 0.5) > 0.1,
+      });
+      remaining = leftover;
     }
-    const { boxes, remaining: leftover } = pack3D(
-      sortCargos(remaining),
-      cargos,
-      selectedCt
-    );
-    if (boxes.length === 0) {
-      remaining = leftover.slice(1);
-      continue;
+    return loads;
+  };
+
+  // ✅ 모든 전략 시도 → 컨테이너 수 가장 적은 결과 선택
+  let best: ContainerLoad3D[] | null = null;
+
+  for (const strategy of strategies) {
+    const result = runPacking(strategy);
+    if (!best || result.length < best.length) {
+      best = result;
     }
-    const cog = calcCOG(boxes, selectedCt.length, selectedCt.width);
-    loads.push({
-      containerId: containerId++,
-      containerType: selectedCt,
-      boxes,
-      cogX: cog.x,
-      cogY: cog.y,
-      xImbalance: Math.abs(cog.x - 0.5) > 0.1,
-      yImbalance: Math.abs(cog.y - 0.5) > 0.1,
-    });
-    remaining = leftover;
+    // 이미 1개면 더 시도할 필요 없음
+    if (best.length === 1) break;
   }
-  return loads;
+
+  // containerId 재정렬
+  return best!.map((load, i) => ({ ...load, containerId: i }));
 }
 
 export default function Home() {
@@ -452,7 +526,9 @@ export default function Home() {
       total_cbm: totalCbm,
       total_weight: totalWeight,
       container_count: containerLoads.length,
-    container_types: Array.from(new Set(containerLoads.map((l) => l.containerType.name))),
+      container_types: Array.from(
+        new Set(containerLoads.map((l) => l.containerType.name))
+      ),
     });
     if (!error) {
       setSaveSuccess(true);

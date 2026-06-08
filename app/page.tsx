@@ -352,15 +352,41 @@ function buildContainerLoads(cargos: CargoItem[]): ContainerLoad3D[] {
         0
       );
       const totalWeight = remaining.reduce((s, c) => s + c.weight, 0);
-      const selectedCt =
-        totalCbm <= ct20GP.maxCbm * 0.92 && totalWeight <= ct20GP.maxWeight
-          ? ct20GP
-          : ct40HQ;
+
+      // ✅ 20GP 1개에 딱 들어가면 20GP, 아니면 무조건 40HQ
+      const fitsIn20GP =
+        totalCbm <= ct20GP.maxCbm * 0.92 && totalWeight <= ct20GP.maxWeight;
+      const selectedCt = fitsIn20GP ? ct20GP : ct40HQ;
+
       const { boxes, remaining: leftover } = pack3D(
         strategy(remaining),
         cargos,
         selectedCt
       );
+
+      // ✅ 20GP 선택했는데 화물이 남으면 → 40HQ로 재시도
+      if (fitsIn20GP && leftover.length > 0) {
+        const { boxes: boxes40, remaining: leftover40 } = pack3D(
+          strategy(remaining),
+          cargos,
+          ct40HQ
+        );
+        if (boxes40.length > 0 && leftover40.length < leftover.length) {
+          const cog = calcCOG(boxes40, ct40HQ.length, ct40HQ.width);
+          loads.push({
+            containerId: containerId++,
+            containerType: ct40HQ,
+            boxes: boxes40,
+            cogX: cog.x,
+            cogY: cog.y,
+            xImbalance: Math.abs(cog.x - 0.5) > 0.1,
+            yImbalance: Math.abs(cog.y - 0.5) > 0.1,
+          });
+          remaining = leftover40;
+          continue;
+        }
+      }
+
       if (boxes.length === 0) {
         remaining = leftover.slice(1);
         continue;

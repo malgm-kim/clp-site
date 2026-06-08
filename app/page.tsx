@@ -64,6 +64,7 @@ type ClpRecord = {
   created_at: string;
   title: string;
   cargos: CargoItem[];
+  results: ContainerLoad3D[];
   total_cbm: number;
   total_weight: number;
   container_count: number;
@@ -73,15 +74,32 @@ type ClpRecord = {
 type User = { id: string; email: string };
 
 const COLORS = [
-  '#4f8ef7',
-  '#38a169',
-  '#e07b30',
-  '#6a5acd',
-  '#e04040',
-  '#0891b2',
-  '#d97706',
-  '#7c3aed',
+  '#6366f1',
+  '#10b981',
+  '#f59e0b',
+  '#ef4444',
+  '#3b82f6',
+  '#8b5cf6',
+  '#ec4899',
+  '#14b8a6',
 ];
+
+const theme = {
+  bg: '#f5f5f4', // 따뜻한 오프화이트
+  card: '#ffffff',
+  primary: '#44403c', // 따뜻한 다크 브라운 (메인 포인트)
+  primaryDark: '#292524',
+  primaryLight: '#f5f5f4',
+  success: '#4d7c60', // 뮤트 그린
+  warning: '#92724a', // 뮤트 앰버
+  danger: '#9f4b4b', // 뮤트 레드
+  text: '#1c1917', // 거의 블랙
+  textSecondary: '#57534e', // 따뜻한 그레이
+  textMuted: '#a8a29e', // 뮤트 그레이
+  border: '#e7e5e4', // 따뜻한 보더
+  shadow: '0 1px 3px rgba(0,0,0,0.05), 0 4px 16px rgba(0,0,0,0.04)',
+  shadowLg: '0 4px 6px rgba(0,0,0,0.04), 0 20px 40px rgba(0,0,0,0.07)',
+};
 
 function getHorizontalRotations(
   l: number,
@@ -156,7 +174,7 @@ function canPlace(
   }
   if (noStack && z > 0) return false;
   if (z === 0) return true;
-  if (calcSupportArea(boxes, x, y, z, l, w) < l * w * 0.3) return false;
+  if (calcSupportArea(boxes, x, y, z, l, w) < l * w * 0.1) return false;
   for (const b of boxes) {
     if (
       (b.noStack || b.noTopLoad) &&
@@ -175,7 +193,7 @@ function canPlace(
           ob.z >= b.z + b.h
       )
       .reduce((s, ob) => s + ob.weight, 0);
-    if (alreadyOn + weight > b.weight) return false;
+    if (b.weight > 0 && alreadyOn + weight > b.weight) return false;
   }
   return true;
 }
@@ -352,19 +370,14 @@ function buildContainerLoads(cargos: CargoItem[]): ContainerLoad3D[] {
         0
       );
       const totalWeight = remaining.reduce((s, c) => s + c.weight, 0);
-
-      // ✅ 20GP 1개에 딱 들어가면 20GP, 아니면 무조건 40HQ
       const fitsIn20GP =
         totalCbm <= ct20GP.maxCbm * 0.92 && totalWeight <= ct20GP.maxWeight;
       const selectedCt = fitsIn20GP ? ct20GP : ct40HQ;
-
       const { boxes, remaining: leftover } = pack3D(
         strategy(remaining),
         cargos,
         selectedCt
       );
-
-      // ✅ 20GP 선택했는데 화물이 남으면 → 40HQ로 재시도
       if (fitsIn20GP && leftover.length > 0) {
         const { boxes: boxes40, remaining: leftover40 } = pack3D(
           strategy(remaining),
@@ -386,7 +399,6 @@ function buildContainerLoads(cargos: CargoItem[]): ContainerLoad3D[] {
           continue;
         }
       }
-
       if (boxes.length === 0) {
         remaining = leftover.slice(1);
         continue;
@@ -414,7 +426,7 @@ function buildContainerLoads(cargos: CargoItem[]): ContainerLoad3D[] {
   return best!.map((load, i) => ({ ...load, containerId: i }));
 }
 
-// ✅ AuthModal을 Home 밖으로 분리
+// ── AuthModal ──────────────────────────────────────────
 type AuthModalProps = {
   authMode: 'login' | 'signup';
   email: string;
@@ -449,7 +461,8 @@ function AuthModal({
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'rgba(0,0,0,0.5)',
+        background: 'rgba(15,23,42,0.6)',
+        backdropFilter: 'blur(4px)',
         zIndex: 1000,
         display: 'flex',
         alignItems: 'center',
@@ -459,26 +472,53 @@ function AuthModal({
       <div
         style={{
           background: 'white',
-          borderRadius: 16,
-          padding: 32,
-          width: 360,
-          boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+          borderRadius: 24,
+          padding: 40,
+          width: 400,
+          boxShadow: theme.shadowLg,
         }}
       >
-        <h2 style={{ fontSize: 20, fontWeight: 800, marginBottom: 4 }}>
-          {authMode === 'login' ? '🔐 로그인' : '📝 회원가입'}
-        </h2>
-        <p style={{ fontSize: 12, color: '#aaa', marginBottom: 24 }}>
-          아이디와 비밀번호로 가입하면 CLP 기록을 저장할 수 있어요
-        </p>
-        <div style={{ marginBottom: 12 }}>
+        <div style={{ textAlign: 'center', marginBottom: 32 }}>
+          <div
+            style={{
+              width: 48,
+              height: 48,
+              background: 'linear-gradient(135deg,#44403c,#57534e)',
+              borderRadius: 16,
+              margin: '0 auto 16px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 24,
+            }}
+          >
+            🚢
+          </div>
+          <h2
+            style={{
+              fontSize: 22,
+              fontWeight: 800,
+              color: theme.text,
+              marginBottom: 6,
+            }}
+          >
+            {authMode === 'login' ? '다시 만나요!' : '시작해볼까요?'}
+          </h2>
+          <p style={{ fontSize: 13, color: theme.textMuted }}>
+            {authMode === 'login'
+              ? '아이디와 비밀번호로 로그인하세요'
+              : '아이디를 만들고 CLP를 저장하세요'}
+          </p>
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
           <label
             style={{
               fontSize: 12,
               fontWeight: 600,
-              color: '#555',
+              color: theme.textSecondary,
               display: 'block',
-              marginBottom: 4,
+              marginBottom: 6,
             }}
           >
             아이디
@@ -492,23 +532,27 @@ function AuthModal({
             placeholder="아이디 입력 (3자 이상)"
             style={{
               width: '100%',
-              padding: '10px 12px',
-              borderRadius: 8,
-              border: '1px solid #ddd',
-              fontSize: 13,
+              padding: '12px 14px',
+              borderRadius: 12,
+              border: `1.5px solid ${theme.border}`,
+              fontSize: 14,
               outline: 'none',
               boxSizing: 'border-box',
+              transition: 'border 0.2s',
+              fontFamily: 'inherit',
             }}
+            onFocus={(e) => (e.target.style.borderColor = theme.primary)}
+            onBlur={(e) => (e.target.style.borderColor = theme.border)}
           />
         </div>
-        <div style={{ marginBottom: 16 }}>
+        <div style={{ marginBottom: 24 }}>
           <label
             style={{
               fontSize: 12,
               fontWeight: 600,
-              color: '#555',
+              color: theme.textSecondary,
               display: 'block',
-              marginBottom: 4,
+              marginBottom: 6,
             }}
           >
             비밀번호
@@ -526,51 +570,60 @@ function AuthModal({
             }
             style={{
               width: '100%',
-              padding: '10px 12px',
-              borderRadius: 8,
-              border: '1px solid #ddd',
-              fontSize: 13,
+              padding: '12px 14px',
+              borderRadius: 12,
+              border: `1.5px solid ${theme.border}`,
+              fontSize: 14,
               outline: 'none',
               boxSizing: 'border-box',
+              transition: 'border 0.2s',
+              fontFamily: 'inherit',
             }}
+            onFocus={(e) => (e.target.style.borderColor = theme.primary)}
+            onBlur={(e) => (e.target.style.borderColor = theme.border)}
           />
         </div>
+
         {authError && (
           <div
             style={{
-              background: '#fff0f0',
-              color: '#e04040',
+              background: '#fef2f2',
+              color: theme.danger,
               fontSize: 12,
-              padding: '8px 12px',
-              borderRadius: 8,
-              marginBottom: 12,
+              padding: '10px 14px',
+              borderRadius: 10,
+              marginBottom: 16,
+              border: '1px solid #fecaca',
             }}
           >
             {authError}
           </div>
         )}
+
         <button
           onClick={authMode === 'login' ? handleLogin : handleSignup}
           disabled={authLoading}
           style={{
             width: '100%',
-            padding: 12,
-            borderRadius: 8,
+            padding: 14,
+            borderRadius: 12,
             border: 'none',
-            background: '#4f8ef7',
+            background: 'linear-gradient(135deg,#44403c,#57534e)',
             color: 'white',
             fontWeight: 700,
-            fontSize: 14,
+            fontSize: 15,
             cursor: 'pointer',
-            marginBottom: 10,
+            marginBottom: 16,
+            fontFamily: 'inherit',
           }}
         >
           {authLoading
-            ? '처리중...'
+            ? '처리 중...'
             : authMode === 'login'
             ? '로그인'
             : '회원가입'}
         </button>
+
         <div
           style={{
             display: 'flex',
@@ -586,10 +639,11 @@ function AuthModal({
             style={{
               background: 'none',
               border: 'none',
-              color: '#4f8ef7',
+              color: theme.primary,
               fontSize: 12,
               cursor: 'pointer',
               fontWeight: 600,
+              fontFamily: 'inherit',
             }}
           >
             {authMode === 'login'
@@ -604,9 +658,10 @@ function AuthModal({
             style={{
               background: 'none',
               border: 'none',
-              color: '#aaa',
+              color: theme.textMuted,
               fontSize: 12,
               cursor: 'pointer',
+              fontFamily: 'inherit',
             }}
           >
             닫기
@@ -617,12 +672,20 @@ function AuthModal({
   );
 }
 
-// ✅ RecordsModal을 Home 밖으로 분리
+// ── RecordsModal ───────────────────────────────────────
 type RecordsModalProps = {
   records: ClpRecord[];
   setShowRecords: (v: boolean) => void;
   loadRecord: (r: ClpRecord) => void;
   deleteRecord: (id: string) => void;
+  duplicateRecord: (r: ClpRecord) => void;
+  editingRecord: ClpRecord | null;
+  setEditingRecord: (r: ClpRecord | null) => void;
+  saveTitle: string;
+  setSaveTitle: (v: string) => void;
+  updateRecord: (id: string) => void;
+  saving: boolean;
+  saveSuccess: boolean;
 };
 
 function RecordsModal({
@@ -630,13 +693,22 @@ function RecordsModal({
   setShowRecords,
   loadRecord,
   deleteRecord,
+  duplicateRecord,
+  editingRecord,
+  setEditingRecord,
+  saveTitle,
+  setSaveTitle,
+  updateRecord,
+  saving,
+  saveSuccess,
 }: RecordsModalProps) {
   return (
     <div
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'rgba(0,0,0,0.5)',
+        background: 'rgba(15,23,42,0.6)',
+        backdropFilter: 'blur(4px)',
         zIndex: 1000,
         display: 'flex',
         alignItems: 'center',
@@ -645,13 +717,13 @@ function RecordsModal({
     >
       <div
         style={{
-          background: 'white',
-          borderRadius: 16,
-          padding: 28,
-          width: 560,
+          background: theme.bg,
+          borderRadius: 24,
+          padding: 32,
+          width: 640,
           maxHeight: '80vh',
           overflow: 'auto',
-          boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+          boxShadow: theme.shadowLg,
         }}
       >
         <div
@@ -659,90 +731,246 @@ function RecordsModal({
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
-            marginBottom: 20,
+            marginBottom: 24,
           }}
         >
-          <h2 style={{ fontSize: 18, fontWeight: 800 }}>📋 내 CLP 기록</h2>
+          <div>
+            <h2
+              style={{
+                fontSize: 20,
+                fontWeight: 800,
+                color: theme.text,
+                marginBottom: 2,
+              }}
+            >
+              📋 내 CLP 기록
+            </h2>
+            <p style={{ fontSize: 13, color: theme.textMuted }}>
+              총 {records.length}개의 기록
+            </p>
+          </div>
           <button
             onClick={() => setShowRecords(false)}
             style={{
-              background: 'none',
+              width: 36,
+              height: 36,
+              borderRadius: 10,
+              background: theme.border,
               border: 'none',
-              fontSize: 20,
+              fontSize: 16,
               cursor: 'pointer',
-              color: '#aaa',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
             }}
           >
             ✕
           </button>
         </div>
+
         {records.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: 40, color: '#aaa' }}>
-            저장된 기록이 없어요
+          <div
+            style={{ textAlign: 'center', padding: 60, color: theme.textMuted }}
+          >
+            <div style={{ fontSize: 40, marginBottom: 12 }}>📭</div>
+            <div style={{ fontSize: 14 }}>저장된 기록이 없어요</div>
           </div>
         ) : (
           records.map((r) => (
             <div
               key={r.id}
               style={{
-                border: '1px solid #eee',
-                borderRadius: 10,
-                padding: 16,
+                background: 'white',
+                border: `1.5px solid ${
+                  editingRecord?.id === r.id ? theme.primary : theme.border
+                }`,
+                borderRadius: 16,
+                padding: 20,
                 marginBottom: 12,
+                transition: 'all 0.2s',
+                boxShadow: theme.shadow,
               }}
             >
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'flex-start',
-                }}
-              >
+              {editingRecord?.id === r.id ? (
                 <div>
                   <div
-                    style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}
-                  >
-                    {r.title}
-                  </div>
-                  <div style={{ fontSize: 12, color: '#888' }}>
-                    {new Date(r.created_at).toLocaleDateString('ko-KR')}{' '}
-                    &nbsp;·&nbsp; 컨테이너 {r.container_count}개 &nbsp;·&nbsp;
-                    {r.total_cbm?.toFixed(2)} CBM &nbsp;·&nbsp;
-                    {r.container_types?.join(', ')}
-                  </div>
-                </div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button
-                    onClick={() => loadRecord(r)}
                     style={{
-                      padding: '6px 14px',
-                      borderRadius: 6,
-                      border: '1px solid #4f8ef7',
-                      background: 'white',
-                      color: '#4f8ef7',
                       fontSize: 12,
+                      color: theme.primary,
                       fontWeight: 700,
-                      cursor: 'pointer',
+                      marginBottom: 10,
                     }}
                   >
-                    불러오기
-                  </button>
-                  <button
-                    onClick={() => deleteRecord(r.id)}
-                    style={{
-                      padding: '6px 12px',
-                      borderRadius: 6,
-                      border: '1px solid #e04040',
-                      background: 'white',
-                      color: '#e04040',
-                      fontSize: 12,
-                      cursor: 'pointer',
-                    }}
-                  >
-                    삭제
-                  </button>
+                    ✏️ 제목 수정
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <input
+                      id={`edit-${r.id}`}
+                      name={`edit-${r.id}`}
+                      value={saveTitle}
+                      onChange={(e) => setSaveTitle(e.target.value)}
+                      style={{
+                        flex: 1,
+                        padding: '10px 14px',
+                        borderRadius: 10,
+                        border: `1.5px solid ${theme.primary}`,
+                        fontSize: 13,
+                        outline: 'none',
+                        fontFamily: 'inherit',
+                      }}
+                    />
+                    <button
+                      onClick={() => updateRecord(r.id)}
+                      disabled={saving}
+                      style={{
+                        padding: '10px 18px',
+                        borderRadius: 10,
+                        border: 'none',
+                        background: saveSuccess ? theme.success : theme.primary,
+                        color: 'white',
+                        fontWeight: 700,
+                        fontSize: 13,
+                        cursor: 'pointer',
+                        fontFamily: 'inherit',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {saving
+                        ? '저장 중...'
+                        : saveSuccess
+                        ? '✅ 저장됨'
+                        : '저장'}
+                    </button>
+                    <button
+                      onClick={() => setEditingRecord(null)}
+                      style={{
+                        padding: '10px 14px',
+                        borderRadius: 10,
+                        border: `1px solid ${theme.border}`,
+                        background: 'white',
+                        color: theme.textSecondary,
+                        fontSize: 13,
+                        cursor: 'pointer',
+                        fontFamily: 'inherit',
+                      }}
+                    >
+                      취소
+                    </button>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div
+                      style={{
+                        fontWeight: 700,
+                        fontSize: 15,
+                        color: theme.text,
+                        marginBottom: 4,
+                      }}
+                    >
+                      {r.title}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 12,
+                        color: theme.textMuted,
+                        display: 'flex',
+                        gap: 12,
+                      }}
+                    >
+                      <span>
+                        📅 {new Date(r.created_at).toLocaleDateString('ko-KR')}
+                      </span>
+                      <span>🚢 {r.container_count}개</span>
+                      <span>📦 {r.total_cbm?.toFixed(2)} CBM</span>
+                      <span>{r.container_types?.join(', ')}</span>
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: 6,
+                      marginLeft: 12,
+                      flexShrink: 0,
+                    }}
+                  >
+                    <button
+                      onClick={() => loadRecord(r)}
+                      style={{
+                        padding: '7px 12px',
+                        borderRadius: 8,
+                        border: `1.5px solid ${theme.primary}`,
+                        background: theme.primaryLight,
+                        color: theme.primary,
+                        fontSize: 12,
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        fontFamily: 'inherit',
+                      }}
+                    >
+                      불러오기
+                    </button>
+                    <button
+                      onClick={() => {
+                        setEditingRecord(r);
+                        setSaveTitle(r.title);
+                      }}
+                      style={{
+                        padding: '7px 12px',
+                        borderRadius: 8,
+                        border: `1.5px solid ${theme.success}`,
+                        background: '#f0fdf4',
+                        color: theme.success,
+                        fontSize: 12,
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        fontFamily: 'inherit',
+                      }}
+                    >
+                      수정
+                    </button>
+                    <button
+                      onClick={() => duplicateRecord(r)}
+                      style={{
+                        padding: '7px 12px',
+                        borderRadius: 8,
+                        border: '1.5px solid #8b5cf6',
+                        background: '#f5f3ff',
+                        color: '#8b5cf6',
+                        fontSize: 12,
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        fontFamily: 'inherit',
+                      }}
+                    >
+                      복제
+                    </button>
+                    <button
+                      onClick={() => deleteRecord(r.id)}
+                      style={{
+                        padding: '7px 12px',
+                        borderRadius: 8,
+                        border: `1.5px solid ${theme.danger}`,
+                        background: '#fef2f2',
+                        color: theme.danger,
+                        fontSize: 12,
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        fontFamily: 'inherit',
+                      }}
+                    >
+                      삭제
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           ))
         )}
@@ -751,6 +979,7 @@ function RecordsModal({
   );
 }
 
+// ── Home ───────────────────────────────────────────────
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
@@ -783,6 +1012,7 @@ export default function Home() {
   const [hoveredBox, setHoveredBox] = useState<PlacedBox3D | null>(null);
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
   const [calculating, setCalculating] = useState(false);
+  const [editingRecord, setEditingRecord] = useState<ClpRecord | null>(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -799,7 +1029,6 @@ export default function Home() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // 아이디를 내부적으로 이메일 형식으로 변환
   const toEmail = (id: string) => `${id.trim()}@clp.app`;
 
   const handleLogin = async () => {
@@ -817,12 +1046,10 @@ export default function Home() {
   const handleSignup = async () => {
     if (email.trim().length < 3) {
       setAuthError('아이디는 3자 이상이어야 해요.');
-      setAuthLoading(false);
       return;
     }
     if (password.length < 6) {
       setAuthError('비밀번호는 6자 이상이어야 해요.');
-      setAuthLoading(false);
       return;
     }
     setAuthLoading(true);
@@ -832,7 +1059,7 @@ export default function Home() {
       password,
     });
     if (error) setAuthError(error.message);
-    else setShowAuth(false); // 이메일 인증 끄면 바로 로그인
+    else setShowAuth(false);
     setAuthLoading(false);
   };
 
@@ -891,9 +1118,58 @@ export default function Home() {
     setShowRecords(false);
     setPage('input');
   };
+
   const deleteRecord = async (id: string) => {
     await supabase.from('clp_records').delete().eq('id', id);
     setRecords((prev) => prev.filter((r) => r.id !== id));
+  };
+
+  const updateRecord = async (id: string) => {
+    if (!user) return;
+    setSaving(true);
+    const totalCbm = cargos.reduce(
+      (s, c) =>
+        s + (c.length / 100) * (c.width / 100) * (c.height / 100) * c.quantity,
+      0
+    );
+    const totalWeight = cargos.reduce((s, c) => s + c.weight * c.quantity, 0);
+    const { error } = await supabase
+      .from('clp_records')
+      .update({
+        title: saveTitle,
+        cargos,
+        results: containerLoads,
+        total_cbm: totalCbm,
+        total_weight: totalWeight,
+        container_count: containerLoads.length,
+        container_types: Array.from(
+          new Set(containerLoads.map((l) => l.containerType.name))
+        ),
+      })
+      .eq('id', id);
+    if (!error) {
+      setSaveSuccess(true);
+      setTimeout(() => {
+        setSaveSuccess(false);
+        setEditingRecord(null);
+      }, 2000);
+    }
+    setSaving(false);
+  };
+
+  const duplicateRecord = async (record: ClpRecord) => {
+    if (!user) return;
+    await supabase.from('clp_records').insert({
+      user_id: user.id,
+      title: `${record.title} (복사본)`,
+      cargos: record.cargos,
+      results: record.results,
+      total_cbm: record.total_cbm,
+      total_weight: record.total_weight,
+      container_count: record.container_count,
+      container_types: record.container_types,
+    });
+    await loadRecords();
   };
 
   const handleReset = () => {
@@ -990,8 +1266,7 @@ export default function Home() {
   const calculate = async () => {
     setCalculating(true);
     await new Promise((resolve) => setTimeout(resolve, 50));
-    const result = buildContainerLoads(cargos);
-    setContainerLoads(result);
+    setContainerLoads(buildContainerLoads(cargos));
     setCalculating(false);
     setPage('result');
   };
@@ -1003,71 +1278,73 @@ export default function Home() {
         left: tooltipPos.x + 16,
         top: Math.min(tooltipPos.y - 20, window.innerHeight - 300),
         background: 'white',
-        border: '2px solid #4f8ef7',
-        borderRadius: 12,
+        borderRadius: 16,
         padding: 16,
-        boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
+        boxShadow: theme.shadowLg,
         zIndex: 1000,
         minWidth: 220,
         pointerEvents: 'none',
+        border: `1px solid ${theme.border}`,
       }}
     >
       <div
         style={{
-          fontSize: 12,
+          fontSize: 11,
           fontWeight: 700,
-          color: '#4f8ef7',
+          color: theme.primary,
           marginBottom: 10,
+          textTransform: 'uppercase',
+          letterSpacing: '0.5px',
         }}
       >
-        📦 박스 정보
+        박스 정보
       </div>
       <div
         style={{
-          background: box.color,
-          borderRadius: 8,
-          padding: '10px 14px',
-          marginBottom: 10,
+          background: `linear-gradient(135deg,${box.color}dd,${box.color}aa)`,
+          borderRadius: 12,
+          padding: '12px 14px',
+          marginBottom: 12,
         }}
       >
-        <div style={{ color: 'white', fontSize: 13, fontWeight: 700 }}>
-          {box.cargoName || '(미입력)'}
-        </div>
         <div
           style={{
-            color: 'rgba(255,255,255,0.85)',
-            fontSize: 11,
-            marginTop: 4,
+            color: 'white',
+            fontSize: 14,
+            fontWeight: 700,
+            marginBottom: 4,
           }}
         >
-          크기: {box.l}×{box.w}×{box.h}cm
+          {box.cargoName || '(미입력)'}
         </div>
-        <div style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11 }}>
-          중량: {box.weight}kg
+        <div style={{ color: 'rgba(255,255,255,0.85)', fontSize: 12 }}>
+          {box.l}×{box.w}×{box.h}cm
+        </div>
+        <div style={{ color: 'rgba(255,255,255,0.85)', fontSize: 12 }}>
+          {box.weight}kg
+        </div>
+      </div>
+      <div style={{ fontSize: 11, color: theme.textSecondary }}>
+        <div style={{ marginBottom: 2 }}>
+          X: {box.x}cm &nbsp; Y: {box.y}cm &nbsp; Z: {box.z}cm
         </div>
         {box.noStack && (
-          <div style={{ color: '#ffcccc', fontSize: 11 }}>❌ 완전 다단불가</div>
-        )}
-        {box.noTopLoad && (
-          <div style={{ color: '#ffcccc', fontSize: 11 }}>
-            ⚠️ 상단 적재 금지
+          <div style={{ color: theme.danger, marginTop: 4, fontWeight: 600 }}>
+            ❌ 완전 다단불가
           </div>
         )}
-      </div>
-      <div style={{ fontSize: 11, color: '#666' }}>
-        <div>
-          위치: X={box.x}cm / Y={box.y}cm / Z={box.z}cm
-        </div>
+        {box.noTopLoad && (
+          <div style={{ color: theme.warning, marginTop: 4, fontWeight: 600 }}>
+            ⚠️ 상단 적재 불가
+          </div>
+        )}
       </div>
     </div>
   );
 
+  // ── 결과 페이지 ──────────────────────────────────────
   if (page === 'result') {
     const totalContainers = containerLoads.length;
-    const cargoColors = cargos.map((c, i) => ({
-      ...c,
-      color: COLORS[i % COLORS.length],
-    }));
     const DL = 660,
       DW = 180,
       DH = 120;
@@ -1076,49 +1353,80 @@ export default function Home() {
       count: containerLoads.filter((l) => l.containerType.name === ct.name)
         .length,
     })).filter((s) => s.count > 0);
+    const cargoColors = cargos.map((c, i) => ({
+      ...c,
+      color: COLORS[i % COLORS.length],
+    }));
 
     return (
-      <main
+      <div
         style={{
-          fontFamily: 'sans-serif',
-          maxWidth: 960,
-          margin: '0 auto',
-          padding: 24,
+          minHeight: '100vh',
+          background: theme.bg,
+          fontFamily: '-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
         }}
       >
-        <div
+        {/* 상단 네비게이션 */}
+        <nav
           style={{
+            background: 'white',
+            borderBottom: `1px solid ${theme.border}`,
+            padding: '0 32px',
+            height: 64,
             display: 'flex',
-            justifyContent: 'space-between',
             alignItems: 'center',
-            marginBottom: 20,
+            justifyContent: 'space-between',
+            position: 'sticky',
+            top: 0,
+            zIndex: 100,
+            boxShadow: '0 1px 0 rgba(0,0,0,0.05)',
           }}
         >
-          <div>
-            <h1 style={{ fontSize: 24, fontWeight: 800, marginBottom: 4 }}>
-              📊 적재 계산 결과
-            </h1>
-            <p style={{ color: '#888' }}>
-              3D Extreme Points · 바닥면 고정 회전 · 자동 컨테이너 선택
-            </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div
+              style={{
+                width: 36,
+                height: 36,
+                background: 'linear-gradient(135deg,#44403c,#57534e)',
+                borderRadius: 10,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 18,
+              }}
+            >
+              🚢
+            </div>
+            <span style={{ fontWeight: 800, fontSize: 16, color: theme.text }}>
+              CLP Studio
+            </span>
           </div>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
             {user ? (
               <>
-                <span style={{ fontSize: 12, color: '#888' }}>
-                  {user.email?.replace('@clp.app', '')}
+                <span
+                  style={{
+                    fontSize: 13,
+                    color: theme.textSecondary,
+                    background: theme.bg,
+                    padding: '6px 12px',
+                    borderRadius: 8,
+                  }}
+                >
+                  👤 {user.email?.replace('@clp.app', '')}
                 </span>
                 <button
                   onClick={loadRecords}
                   style={{
-                    padding: '8px 14px',
-                    borderRadius: 8,
-                    border: '1px solid #4f8ef7',
-                    background: 'white',
-                    color: '#4f8ef7',
-                    fontSize: 12,
+                    padding: '8px 16px',
+                    borderRadius: 10,
+                    border: `1.5px solid ${theme.primary}`,
+                    background: theme.primaryLight,
+                    color: theme.primary,
+                    fontSize: 13,
                     fontWeight: 700,
                     cursor: 'pointer',
+                    fontFamily: 'inherit',
                   }}
                 >
                   📋 내 기록
@@ -1127,12 +1435,13 @@ export default function Home() {
                   onClick={handleLogout}
                   style={{
                     padding: '8px 14px',
-                    borderRadius: 8,
-                    border: '1px solid #ddd',
+                    borderRadius: 10,
+                    border: `1px solid ${theme.border}`,
                     background: 'white',
-                    color: '#888',
-                    fontSize: 12,
+                    color: theme.textSecondary,
+                    fontSize: 13,
                     cursor: 'pointer',
+                    fontFamily: 'inherit',
                   }}
                 >
                   로그아웃
@@ -1142,758 +1451,937 @@ export default function Home() {
               <button
                 onClick={() => setShowAuth(true)}
                 style={{
-                  padding: '8px 16px',
-                  borderRadius: 8,
+                  padding: '8px 18px',
+                  borderRadius: 10,
                   border: 'none',
-                  background: '#4f8ef7',
+                  background: 'linear-gradient(135deg,#44403c,#57534e)',
                   color: 'white',
-                  fontSize: 12,
+                  fontSize: 13,
                   fontWeight: 700,
                   cursor: 'pointer',
+                  fontFamily: 'inherit',
                 }}
               >
                 🔐 로그인
               </button>
             )}
-          </div>
-        </div>
-
-        {user && (
-          <div
-            style={{
-              background: 'white',
-              borderRadius: 12,
-              padding: 16,
-              marginBottom: 20,
-              boxShadow: '0 2px 8px rgba(0,0,0,0.07)',
-              display: 'flex',
-              gap: 10,
-              alignItems: 'center',
-            }}
-          >
-            <input
-              id="saveTitle"
-              name="saveTitle"
-              value={saveTitle}
-              onChange={(e) => setSaveTitle(e.target.value)}
-              placeholder="저장할 CLP 이름 (선택사항)"
-              style={{
-                flex: 1,
-                padding: '8px 12px',
-                borderRadius: 8,
-                border: '1px solid #ddd',
-                fontSize: 13,
-                outline: 'none',
-              }}
-            />
             <button
-              onClick={handleSave}
-              disabled={saving}
+              onClick={() => setPage('input')}
               style={{
-                padding: '8px 20px',
-                borderRadius: 8,
-                border: 'none',
-                background: saveSuccess ? '#38a169' : '#4f8ef7',
-                color: 'white',
-                fontWeight: 700,
+                padding: '8px 16px',
+                borderRadius: 10,
+                border: `1px solid ${theme.border}`,
+                background: 'white',
+                color: theme.textSecondary,
                 fontSize: 13,
                 cursor: 'pointer',
-                whiteSpace: 'nowrap',
+                fontFamily: 'inherit',
               }}
             >
-              {saving
-                ? '저장 중...'
-                : saveSuccess
-                ? '✅ 저장됨'
-                : '💾 저장하기'}
+              ← 다시 입력
             </button>
           </div>
-        )}
+        </nav>
 
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: `repeat(${2 + summary.length},1fr)`,
-            gap: 16,
-            marginBottom: 24,
-          }}
-        >
-          {[
-            {
-              label: '총 컨테이너',
-              value: `${totalContainers}개`,
-              color: '#1a1a2e',
-              sub: '자동 선택',
-            },
-            {
-              label: '총 CBM',
-              value: totalCbm.toFixed(2),
-              color: '#4f8ef7',
-              sub: 'm³',
-            },
-            ...summary.map((s) => ({
-              label: s.name,
-              value: `${s.count}개`,
-              color: '#38a169',
-              sub: `최대 ${s.maxCbm} CBM`,
-            })),
-          ].map((stat) => (
+        <div style={{ maxWidth: 1000, margin: '0 auto', padding: '32px 24px' }}>
+          {/* 페이지 타이틀 */}
+          <div style={{ marginBottom: 32 }}>
+            <h1
+              style={{
+                fontSize: 28,
+                fontWeight: 800,
+                color: theme.text,
+                marginBottom: 6,
+              }}
+            >
+              적재 계산 결과
+            </h1>
+            <p style={{ fontSize: 14, color: theme.textMuted }}>
+              3D Extreme Points · 바닥면 고정 회전 · 자동 컨테이너 선택
+            </p>
+          </div>
+
+          {/* 저장 섹션 */}
+          {user && (
             <div
-              key={stat.label}
               style={{
                 background: 'white',
-                borderRadius: 12,
+                borderRadius: 16,
                 padding: 20,
-                boxShadow: '0 2px 8px rgba(0,0,0,0.07)',
-                textAlign: 'center',
+                marginBottom: 24,
+                boxShadow: theme.shadow,
+                border: `1px solid ${theme.border}`,
+                display: 'flex',
+                gap: 12,
+                alignItems: 'center',
+              }}
+            >
+              <div style={{ fontSize: 20 }}>💾</div>
+              <input
+                id="saveTitle"
+                name="saveTitle"
+                value={saveTitle}
+                onChange={(e) => setSaveTitle(e.target.value)}
+                placeholder="CLP 이름을 입력하세요 (선택사항)"
+                style={{
+                  flex: 1,
+                  padding: '10px 14px',
+                  borderRadius: 10,
+                  border: `1.5px solid ${theme.border}`,
+                  fontSize: 13,
+                  outline: 'none',
+                  fontFamily: 'inherit',
+                }}
+                onFocus={(e) => (e.target.style.borderColor = theme.primary)}
+                onBlur={(e) => (e.target.style.borderColor = theme.border)}
+              />
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                style={{
+                  padding: '10px 24px',
+                  borderRadius: 10,
+                  border: 'none',
+                  background: saveSuccess
+                    ? theme.success
+                    : 'linear-gradient(135deg,#44403c,#57534e)',
+                  color: 'white',
+                  fontWeight: 700,
+                  fontSize: 13,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  fontFamily: 'inherit',
+                }}
+              >
+                {saving ? '저장 중...' : saveSuccess ? '✅ 저장됨' : '저장하기'}
+              </button>
+            </div>
+          )}
+
+          {/* 요약 카드 */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: `repeat(${2 + summary.length},1fr)`,
+              gap: 16,
+              marginBottom: 28,
+            }}
+          >
+            <div
+              style={{
+                background: 'white',
+                borderRadius: 16,
+                padding: 24,
+                boxShadow: theme.shadow,
+                border: `1px solid ${theme.border}`,
               }}
             >
               <div
                 style={{
                   fontSize: 12,
-                  color: '#888',
+                  color: theme.textMuted,
                   fontWeight: 600,
                   marginBottom: 8,
                   textTransform: 'uppercase',
+                  letterSpacing: '0.5px',
                 }}
               >
-                {stat.label}
+                총 컨테이너
               </div>
-              <div style={{ fontSize: 32, fontWeight: 800, color: stat.color }}>
-                {stat.value}
+              <div style={{ fontSize: 36, fontWeight: 800, color: theme.text }}>
+                {totalContainers}
+                <span style={{ fontSize: 18, fontWeight: 600 }}>개</span>
               </div>
-              <div style={{ fontSize: 12, color: '#aaa', marginTop: 4 }}>
-                {stat.sub}
+              <div
+                style={{ fontSize: 12, color: theme.textMuted, marginTop: 4 }}
+              >
+                자동 선택
               </div>
             </div>
-          ))}
-        </div>
-
-        {containerLoads.map((load, ci) => {
-          const ct = load.containerType;
-          const loadedCbm = load.boxes.reduce(
-            (s, b) => s + (b.l / 100) * (b.w / 100) * (b.h / 100),
-            0
-          );
-          const loadedWeight = load.boxes.reduce((s, b) => s + b.weight, 0);
-          const cbmRate = ((loadedCbm / ct.maxCbm) * 100).toFixed(1);
-          const scaleL = DL / ct.length,
-            scaleW = DW / ct.width,
-            scaleH = DH / ct.height;
-          return (
             <div
-              key={load.containerId}
               style={{
                 background: 'white',
-                borderRadius: 12,
-                padding: 20,
-                marginBottom: 20,
-                boxShadow: '0 2px 8px rgba(0,0,0,0.07)',
+                borderRadius: 16,
+                padding: 24,
+                boxShadow: theme.shadow,
+                border: `1px solid ${theme.border}`,
               }}
             >
               <div
                 style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  marginBottom: 4,
+                  fontSize: 12,
+                  color: theme.textMuted,
+                  fontWeight: 600,
+                  marginBottom: 8,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px',
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <div
-                    style={{
-                      fontSize: 13,
-                      fontWeight: 700,
-                      color: '#555',
-                      textTransform: 'uppercase',
-                    }}
-                  >
-                    🚢 컨테이너 {ci + 1} / {totalContainers}
-                  </div>
-                  <span
-                    style={{
-                      background: '#eef4ff',
-                      color: '#4f8ef7',
-                      fontSize: 12,
-                      fontWeight: 700,
-                      padding: '3px 10px',
-                      borderRadius: 20,
-                    }}
-                  >
-                    {ct.name}
-                  </span>
-                  {(load.xImbalance || load.yImbalance) && (
-                    <span
-                      style={{
-                        background: '#fff0f0',
-                        color: '#e04040',
-                        fontSize: 11,
-                        fontWeight: 700,
-                        padding: '3px 10px',
-                        borderRadius: 20,
-                      }}
-                    >
-                      ⚠️ 무게 편중
-                    </span>
-                  )}
-                </div>
-                <div
+                총 CBM
+              </div>
+              <div
+                style={{ fontSize: 36, fontWeight: 800, color: theme.primary }}
+              >
+                {totalCbm.toFixed(2)}
+                <span
                   style={{
-                    display: 'flex',
-                    gap: 16,
-                    fontSize: 12,
-                    color: '#666',
+                    fontSize: 16,
+                    fontWeight: 600,
+                    color: theme.textMuted,
                   }}
                 >
-                  <span>
-                    CBM:{' '}
-                    <strong style={{ color: '#4f8ef7' }}>
-                      {loadedCbm.toFixed(2)}
-                    </strong>{' '}
-                    / {ct.maxCbm}
-                  </span>
-                  <span>
-                    중량:{' '}
-                    <strong style={{ color: '#4f8ef7' }}>
-                      {loadedWeight.toLocaleString()}
-                    </strong>{' '}
-                    / {ct.maxWeight.toLocaleString()}kg
-                  </span>
-                  <span>
-                    적재율:{' '}
-                    <strong
-                      style={{
-                        color: Number(cbmRate) > 90 ? '#38a169' : '#e07b30',
-                      }}
-                    >
-                      {cbmRate}%
-                    </strong>
-                  </span>
-                </div>
+                  {' '}
+                  m³
+                </span>
               </div>
               <div
-                style={{
-                  background: '#f0f0f0',
-                  borderRadius: 4,
-                  height: 8,
-                  marginBottom: 16,
-                  overflow: 'hidden',
-                }}
+                style={{ fontSize: 12, color: theme.textMuted, marginTop: 4 }}
               >
-                <div
-                  style={{
-                    width: `${Math.min(100, Number(cbmRate))}%`,
-                    height: '100%',
-                    background: Number(cbmRate) > 90 ? '#38a169' : '#4f8ef7',
-                    borderRadius: 4,
-                  }}
-                />
-              </div>
-              <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
-                <div>
-                  <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>
-                    📐 상면도 (위에서)
-                  </div>
-                  <div
-                    style={{
-                      position: 'relative',
-                      width: DL + 4,
-                      height: DW + 4,
-                      background: '#eef4ff',
-                      border: '3px solid #4f8ef7',
-                      borderRadius: 8,
-                      overflow: 'hidden',
-                    }}
-                  >
-                    <div
-                      style={{
-                        position: 'absolute',
-                        top: 3,
-                        left: 6,
-                        fontSize: 9,
-                        fontWeight: 700,
-                        color: '#4f8ef7',
-                        zIndex: 2,
-                      }}
-                    >
-                      {ct.name}
-                    </div>
-                    <div
-                      style={{
-                        position: 'absolute',
-                        top: `${load.cogY * 100}%`,
-                        left: 0,
-                        right: 0,
-                        height: 1,
-                        background: '#e04040',
-                        opacity: 0.3,
-                        zIndex: 3,
-                      }}
-                    />
-                    <div
-                      style={{
-                        position: 'absolute',
-                        left: `${load.cogX * 100}%`,
-                        top: 0,
-                        bottom: 0,
-                        width: 1,
-                        background: '#e04040',
-                        opacity: 0.3,
-                        zIndex: 3,
-                      }}
-                    />
-                    <div
-                      style={{
-                        position: 'absolute',
-                        left: `${load.cogX * 100}%`,
-                        top: `${load.cogY * 100}%`,
-                        transform: 'translate(-50%,-50%)',
-                        zIndex: 4,
-                        width: 8,
-                        height: 8,
-                        borderRadius: '50%',
-                        background:
-                          load.xImbalance || load.yImbalance
-                            ? '#e04040'
-                            : '#38a169',
-                        border: '2px solid white',
-                        boxShadow: '0 0 4px rgba(0,0,0,0.4)',
-                      }}
-                    />
-                    {[...load.boxes]
-                      .sort((a, b) => a.z - b.z)
-                      .map((box, bi) => {
-                        const isHovered = hoveredBox === box;
-                        const px = box.x * scaleL,
-                          py = box.y * scaleW;
-                        const pw = box.l * scaleL,
-                          ph = box.w * scaleW;
-                        const opacity = 0.6 + (box.z / ct.height) * 0.4;
-                        return (
-                          <div
-                            key={bi}
-                            onMouseEnter={(e) => {
-                              setHoveredBox(box);
-                              setTooltipPos({ x: e.clientX, y: e.clientY });
-                            }}
-                            onMouseMove={(e) =>
-                              setTooltipPos({ x: e.clientX, y: e.clientY })
-                            }
-                            onMouseLeave={() => setHoveredBox(null)}
-                            style={{
-                              position: 'absolute',
-                              left: px,
-                              top: py,
-                              width: pw,
-                              height: ph,
-                              background: box.color,
-                              opacity,
-                              borderRadius: 2,
-                              cursor: 'pointer',
-                              overflow: 'hidden',
-                              border: isHovered
-                                ? '2px solid white'
-                                : '1px solid rgba(255,255,255,0.4)',
-                              boxShadow: isHovered
-                                ? '0 0 0 2px #1a1a2e'
-                                : 'none',
-                              zIndex: isHovered ? 20 : box.z + 1,
-                              transition: 'all 0.1s ease',
-                            }}
-                          >
-                            {pw > 20 && ph > 14 && (
-                              <div
-                                style={{
-                                  color: 'white',
-                                  fontSize: 7,
-                                  fontWeight: 700,
-                                  padding: 2,
-                                  overflow: 'hidden',
-                                  textOverflow: 'ellipsis',
-                                  whiteSpace: 'nowrap',
-                                }}
-                              >
-                                {box.cargoName || '화물'}
-                              </div>
-                            )}
-                            {box.noStack && (
-                              <div
-                                style={{
-                                  position: 'absolute',
-                                  top: 1,
-                                  right: 1,
-                                  background: '#fff0f0',
-                                  color: '#e04040',
-                                  fontSize: 5,
-                                  padding: '0 2px',
-                                  borderRadius: 1,
-                                  fontWeight: 800,
-                                }}
-                              >
-                                NO
-                              </div>
-                            )}
-                            {box.noTopLoad && (
-                              <div
-                                style={{
-                                  position: 'absolute',
-                                  top: 1,
-                                  left: 1,
-                                  background: '#fff7e6',
-                                  color: '#d97706',
-                                  fontSize: 5,
-                                  padding: '0 2px',
-                                  borderRadius: 1,
-                                  fontWeight: 800,
-                                }}
-                              >
-                                NT
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                  </div>
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      fontSize: 9,
-                      color: '#aaa',
-                      marginTop: 2,
-                    }}
-                  >
-                    <span>← 0</span>
-                    <span>{ct.length}cm →</span>
-                  </div>
-                </div>
-                <div>
-                  <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>
-                    📐 측면도 (옆에서)
-                  </div>
-                  <div
-                    style={{
-                      position: 'relative',
-                      width: DL + 4,
-                      height: DH + 4,
-                      background: '#f0fff4',
-                      border: '3px solid #38a169',
-                      borderRadius: 8,
-                      overflow: 'hidden',
-                    }}
-                  >
-                    {[...load.boxes]
-                      .sort((a, b) => a.y - b.y)
-                      .map((box, bi) => {
-                        const isHovered = hoveredBox === box;
-                        const px = box.x * scaleL;
-                        const pz = (ct.height - box.z - box.h) * scaleH;
-                        const pw = box.l * scaleL,
-                          ph = box.h * scaleH;
-                        const opacity = 0.5 + (box.y / ct.width) * 0.5;
-                        return (
-                          <div
-                            key={bi}
-                            onMouseEnter={(e) => {
-                              setHoveredBox(box);
-                              setTooltipPos({ x: e.clientX, y: e.clientY });
-                            }}
-                            onMouseMove={(e) =>
-                              setTooltipPos({ x: e.clientX, y: e.clientY })
-                            }
-                            onMouseLeave={() => setHoveredBox(null)}
-                            style={{
-                              position: 'absolute',
-                              left: px,
-                              top: pz,
-                              width: pw,
-                              height: Math.max(ph, 1),
-                              background: box.color,
-                              opacity,
-                              borderRadius: 2,
-                              cursor: 'pointer',
-                              overflow: 'hidden',
-                              border: isHovered
-                                ? '2px solid white'
-                                : '1px solid rgba(255,255,255,0.4)',
-                              boxShadow: isHovered
-                                ? '0 0 0 2px #1a1a2e'
-                                : 'none',
-                              zIndex: isHovered
-                                ? 20
-                                : 10 - Math.floor((box.y / ct.width) * 10),
-                              transition: 'all 0.1s ease',
-                            }}
-                          >
-                            {pw > 20 && ph > 14 && (
-                              <div
-                                style={{
-                                  color: 'white',
-                                  fontSize: 7,
-                                  fontWeight: 700,
-                                  padding: 2,
-                                  overflow: 'hidden',
-                                  textOverflow: 'ellipsis',
-                                  whiteSpace: 'nowrap',
-                                }}
-                              >
-                                {box.cargoName || '화물'}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                  </div>
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      fontSize: 9,
-                      color: '#aaa',
-                      marginTop: 2,
-                    }}
-                  >
-                    <span>← 0</span>
-                    <span>{ct.length}cm →</span>
-                  </div>
-                </div>
-              </div>
-              <div style={{ fontSize: 10, color: '#aaa' }}>
-                💡 박스에 마우스를 올리면 상세 정보 · NO: 완전다단불가 · NT:
-                상단적재
+                총 화물 부피
               </div>
             </div>
-          );
-        })}
-
-        <div
-          style={{
-            background: 'white',
-            borderRadius: 12,
-            padding: 16,
-            marginBottom: 20,
-            boxShadow: '0 2px 8px rgba(0,0,0,0.07)',
-          }}
-        >
-          <div
-            style={{
-              fontSize: 12,
-              fontWeight: 700,
-              color: '#555',
-              marginBottom: 10,
-            }}
-          >
-            범례
-          </div>
-          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-            {cargoColors.map((c) => (
+            {summary.map((s) => (
               <div
-                key={c.id}
+                key={s.name}
                 style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  fontSize: 12,
-                  color: '#555',
+                  background: 'white',
+                  borderRadius: 16,
+                  padding: 24,
+                  boxShadow: theme.shadow,
+                  border: `1px solid ${theme.border}`,
                 }}
               >
                 <div
                   style={{
-                    width: 14,
-                    height: 14,
-                    borderRadius: 3,
-                    background: c.color,
+                    fontSize: 12,
+                    color: theme.textMuted,
+                    fontWeight: 600,
+                    marginBottom: 8,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.5px',
                   }}
-                />
-                {c.name || '(미입력)'}
+                >
+                  {s.name}
+                </div>
+                <div
+                  style={{
+                    fontSize: 36,
+                    fontWeight: 800,
+                    color: theme.success,
+                  }}
+                >
+                  {s.count}
+                  <span style={{ fontSize: 18, fontWeight: 600 }}>개</span>
+                </div>
+                <div
+                  style={{ fontSize: 12, color: theme.textMuted, marginTop: 4 }}
+                >
+                  최대 {s.maxCbm} CBM
+                </div>
               </div>
             ))}
           </div>
-        </div>
 
-        <div
-          style={{
-            background: 'white',
-            borderRadius: 12,
-            padding: 20,
-            marginBottom: 20,
-            boxShadow: '0 2px 8px rgba(0,0,0,0.07)',
-          }}
-        >
-          <div
-            style={{
-              fontSize: 13,
-              fontWeight: 700,
-              color: '#555',
-              marginBottom: 12,
-              textTransform: 'uppercase',
-            }}
-          >
-            품목별 요약
-          </div>
-          <div style={{ overflowX: 'auto' }}>
-            <table
-              style={{
-                width: '100%',
-                borderCollapse: 'collapse',
-                fontSize: 13,
-              }}
-            >
-              <thead>
-                <tr style={{ background: '#f7f9fc' }}>
-                  {[
-                    '품명',
-                    '수량',
-                    '단위CBM',
-                    '총CBM',
-                    '중량(kg)',
-                    '적재옵션',
-                  ].map((h) => (
-                    <th
-                      key={h}
+          {/* 컨테이너별 배치도 */}
+          {containerLoads.map((load, ci) => {
+            const ct = load.containerType;
+            const loadedCbm = load.boxes.reduce(
+              (s, b) => s + (b.l / 100) * (b.w / 100) * (b.h / 100),
+              0
+            );
+            const loadedWeight = load.boxes.reduce((s, b) => s + b.weight, 0);
+            const cbmRate = ((loadedCbm / ct.maxCbm) * 100).toFixed(1);
+            const scaleL = DL / ct.length,
+              scaleW = DW / ct.width,
+              scaleH = DH / ct.height;
+            const isGood = Number(cbmRate) > 80;
+
+            return (
+              <div
+                key={load.containerId}
+                style={{
+                  background: 'white',
+                  borderRadius: 20,
+                  padding: 28,
+                  marginBottom: 20,
+                  boxShadow: theme.shadow,
+                  border: `1px solid ${theme.border}`,
+                }}
+              >
+                {/* 헤더 */}
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    marginBottom: 20,
+                  }}
+                >
+                  <div
+                    style={{ display: 'flex', alignItems: 'center', gap: 12 }}
+                  >
+                    <div
                       style={{
-                        padding: '10px',
-                        textAlign: 'left',
-                        color: '#666',
-                        fontWeight: 600,
-                        borderBottom: '2px solid #eee',
+                        width: 40,
+                        height: 40,
+                        background: isGood ? '#f0fdf4' : '#eff6ff',
+                        borderRadius: 12,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: 20,
                       }}
                     >
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {cargos.map((c, i) => (
-                  <tr key={c.id}>
-                    <td style={{ padding: '10px', fontWeight: 600 }}>
+                      🚢
+                    </div>
+                    <div>
+                      <div
+                        style={{
+                          fontWeight: 800,
+                          fontSize: 16,
+                          color: theme.text,
+                        }}
+                      >
+                        컨테이너 {ci + 1} / {totalContainers}
+                      </div>
+                      <div style={{ fontSize: 12, color: theme.textMuted }}>
+                        자동 선택됨
+                      </div>
+                    </div>
+                    <span
+                      style={{
+                        background: theme.primaryLight,
+                        color: theme.primary,
+                        fontSize: 12,
+                        fontWeight: 700,
+                        padding: '5px 12px',
+                        borderRadius: 20,
+                      }}
+                    >
+                      {ct.name}
+                    </span>
+                    {(load.xImbalance || load.yImbalance) && (
                       <span
                         style={{
-                          display: 'inline-block',
-                          width: 10,
-                          height: 10,
-                          borderRadius: 2,
-                          background: COLORS[i % COLORS.length],
-                          marginRight: 6,
+                          background: '#fef2f2',
+                          color: theme.danger,
+                          fontSize: 12,
+                          fontWeight: 700,
+                          padding: '5px 12px',
+                          borderRadius: 20,
                         }}
-                      />
-                      {c.name || '(미입력)'}
-                    </td>
-                    <td style={{ padding: '10px' }}>{c.quantity}박스</td>
-                    <td style={{ padding: '10px' }}>
-                      {(
-                        (c.length / 100) *
-                        (c.width / 100) *
-                        (c.height / 100)
-                      ).toFixed(3)}
-                    </td>
-                    <td
+                      >
+                        ⚠️ 무게 편중
+                      </span>
+                    )}
+                  </div>
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: 20,
+                      fontSize: 13,
+                      color: theme.textSecondary,
+                    }}
+                  >
+                    <div style={{ textAlign: 'right' }}>
+                      <div
+                        style={{
+                          fontSize: 11,
+                          color: theme.textMuted,
+                          marginBottom: 2,
+                        }}
+                      >
+                        CBM
+                      </div>
+                      <div style={{ fontWeight: 700, color: theme.text }}>
+                        {loadedCbm.toFixed(2)}{' '}
+                        <span
+                          style={{ color: theme.textMuted, fontWeight: 400 }}
+                        >
+                          / {ct.maxCbm}
+                        </span>
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div
+                        style={{
+                          fontSize: 11,
+                          color: theme.textMuted,
+                          marginBottom: 2,
+                        }}
+                      >
+                        적재율
+                      </div>
+                      <div
+                        style={{
+                          fontWeight: 800,
+                          fontSize: 16,
+                          color: isGood ? theme.success : theme.warning,
+                        }}
+                      >
+                        {cbmRate}%
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 프로그레스 바 */}
+                <div
+                  style={{
+                    background: theme.bg,
+                    borderRadius: 8,
+                    height: 8,
+                    marginBottom: 24,
+                    overflow: 'hidden',
+                  }}
+                >
+                  <div
+                    style={{
+                      width: `${Math.min(100, Number(cbmRate))}%`,
+                      height: '100%',
+                      background: isGood
+                        ? `linear-gradient(90deg,${theme.success},#6da882)`
+                        : `linear-gradient(90deg,${theme.primary},#78716c)`,
+                      borderRadius: 8,
+                      transition: 'width 0.5s ease',
+                    }}
+                  />
+                </div>
+
+                {/* 뷰 */}
+                <div style={{ display: 'flex', gap: 16, marginBottom: 12 }}>
+                  <div style={{ flex: 1 }}>
+                    <div
                       style={{
-                        padding: '10px',
-                        color: '#4f8ef7',
-                        fontWeight: 700,
+                        fontSize: 11,
+                        fontWeight: 600,
+                        color: theme.textMuted,
+                        marginBottom: 8,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.5px',
                       }}
                     >
-                      {calcCbm(c).toFixed(3)}
-                    </td>
-                    <td style={{ padding: '10px' }}>{c.weight}kg</td>
-                    <td style={{ padding: '10px' }}>
-                      {c.noStack ? (
-                        <span
-                          style={{
-                            padding: '3px 10px',
-                            borderRadius: 20,
-                            fontSize: 11,
-                            fontWeight: 700,
-                            background: '#fff0f0',
-                            color: '#e04040',
-                          }}
-                        >
-                          ❌ 완전 다단불가
-                        </span>
-                      ) : c.noTopLoad ? (
-                        <span
-                          style={{
-                            padding: '3px 10px',
-                            borderRadius: 20,
-                            fontSize: 11,
-                            fontWeight: 700,
-                            background: '#fff7e6',
-                            color: '#d97706',
-                          }}
-                        >
-                          ⚠️ 상단 적재 금지
-                        </span>
-                      ) : (
-                        <span
-                          style={{
-                            padding: '3px 10px',
-                            borderRadius: 20,
-                            fontSize: 11,
-                            fontWeight: 700,
-                            background: '#f0fff4',
-                            color: '#38a169',
-                          }}
-                        >
-                          ✅ 가능
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+                      상면도 (위에서)
+                    </div>
+                    <div
+                      style={{
+                        position: 'relative',
+                        height: DW + 4,
+                        background: '#f8faff',
+                        border: `2px solid ${theme.primary}20`,
+                        borderRadius: 12,
+                        overflow: 'hidden',
+                      }}
+                    >
+                      <div
+                        style={{
+                          position: 'absolute',
+                          top: 6,
+                          left: 10,
+                          fontSize: 9,
+                          fontWeight: 700,
+                          color: theme.primary,
+                          opacity: 0.7,
+                          zIndex: 2,
+                        }}
+                      >
+                        {ct.name}
+                      </div>
+                      <div
+                        style={{
+                          position: 'absolute',
+                          top: `${load.cogY * 100}%`,
+                          left: 0,
+                          right: 0,
+                          height: 1,
+                          background: theme.danger,
+                          opacity: 0.2,
+                          zIndex: 3,
+                        }}
+                      />
+                      <div
+                        style={{
+                          position: 'absolute',
+                          left: `${load.cogX * 100}%`,
+                          top: 0,
+                          bottom: 0,
+                          width: 1,
+                          background: theme.danger,
+                          opacity: 0.2,
+                          zIndex: 3,
+                        }}
+                      />
+                      <div
+                        style={{
+                          position: 'absolute',
+                          left: `${load.cogX * 100}%`,
+                          top: `${load.cogY * 100}%`,
+                          transform: 'translate(-50%,-50%)',
+                          zIndex: 4,
+                          width: 8,
+                          height: 8,
+                          borderRadius: '50%',
+                          background:
+                            load.xImbalance || load.yImbalance
+                              ? theme.danger
+                              : theme.success,
+                          border: '2px solid white',
+                          boxShadow: '0 0 6px rgba(0,0,0,0.2)',
+                        }}
+                      />
+                      {[...load.boxes]
+                        .sort((a, b) => a.z - b.z)
+                        .map((box, bi) => {
+                          const isHovered = hoveredBox === box;
+                          const px = box.x * scaleL,
+                            py = box.y * scaleW;
+                          const pw = box.l * scaleL,
+                            ph = box.w * scaleW;
+                          const opacity = 0.65 + (box.z / ct.height) * 0.35;
+                          return (
+                            <div
+                              key={bi}
+                              onMouseEnter={(e) => {
+                                setHoveredBox(box);
+                                setTooltipPos({ x: e.clientX, y: e.clientY });
+                              }}
+                              onMouseMove={(e) =>
+                                setTooltipPos({ x: e.clientX, y: e.clientY })
+                              }
+                              onMouseLeave={() => setHoveredBox(null)}
+                              style={{
+                                position: 'absolute',
+                                left: px,
+                                top: py,
+                                width: pw,
+                                height: ph,
+                                background: box.color,
+                                opacity,
+                                borderRadius: 3,
+                                cursor: 'pointer',
+                                overflow: 'hidden',
+                                border: isHovered
+                                  ? '2px solid white'
+                                  : '1px solid rgba(255,255,255,0.5)',
+                                boxShadow: isHovered
+                                  ? `0 0 0 2px ${box.color},0 4px 12px rgba(0,0,0,0.15)`
+                                  : 'none',
+                                zIndex: isHovered ? 20 : box.z + 1,
+                                transition: 'all 0.15s ease',
+                              }}
+                            >
+                              {pw > 24 && ph > 16 && (
+                                <div
+                                  style={{
+                                    color: 'white',
+                                    fontSize: 7,
+                                    fontWeight: 700,
+                                    padding: '2px 3px',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                    textShadow: '0 1px 2px rgba(0,0,0,0.3)',
+                                  }}
+                                >
+                                  {box.cargoName || '화물'}
+                                </div>
+                              )}
+                              {box.noStack && (
+                                <div
+                                  style={{
+                                    position: 'absolute',
+                                    top: 1,
+                                    right: 1,
+                                    background: 'rgba(239,68,68,0.9)',
+                                    color: 'white',
+                                    fontSize: 5,
+                                    padding: '1px 2px',
+                                    borderRadius: 2,
+                                    fontWeight: 800,
+                                  }}
+                                >
+                                  NO
+                                </div>
+                              )}
+                              {box.noTopLoad && (
+                                <div
+                                  style={{
+                                    position: 'absolute',
+                                    top: 1,
+                                    left: 1,
+                                    background: 'rgba(245,158,11,0.9)',
+                                    color: 'white',
+                                    fontSize: 5,
+                                    padding: '1px 2px',
+                                    borderRadius: 2,
+                                    fontWeight: 800,
+                                  }}
+                                >
+                                  NT
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                    </div>
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        fontSize: 10,
+                        color: theme.textMuted,
+                        marginTop: 4,
+                      }}
+                    >
+                      <span>0cm</span>
+                      <span>{ct.length}cm</span>
+                    </div>
+                  </div>
 
-        <button
-          onClick={handleReset}
-          style={{
-            width: '100%',
-            marginBottom: 12,
-            padding: 14,
-            borderRadius: 8,
-            border: '1px solid #e04040',
-            background: 'white',
-            color: '#e04040',
-            fontWeight: 700,
-            fontSize: 15,
-            cursor: 'pointer',
-          }}
-        >
-          🗑️ 초기화
-        </button>
-        <div style={{ display: 'flex', gap: 12 }}>
-          <button
-            onClick={() => setPage('input')}
+                  <div style={{ flex: 1 }}>
+                    <div
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 600,
+                        color: theme.textMuted,
+                        marginBottom: 8,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.5px',
+                      }}
+                    >
+                      측면도 (옆에서)
+                    </div>
+                    <div
+                      style={{
+                        position: 'relative',
+                        height: DH + 4,
+                        background: '#f0fdf6',
+                        border: `2px solid ${theme.success}20`,
+                        borderRadius: 12,
+                        overflow: 'hidden',
+                      }}
+                    >
+                      {[...load.boxes]
+                        .sort((a, b) => a.y - b.y)
+                        .map((box, bi) => {
+                          const isHovered = hoveredBox === box;
+                          const px = box.x * scaleL;
+                          const pz = (ct.height - box.z - box.h) * scaleH;
+                          const pw = box.l * scaleL,
+                            ph = box.h * scaleH;
+                          const opacity = 0.5 + (box.y / ct.width) * 0.5;
+                          return (
+                            <div
+                              key={bi}
+                              onMouseEnter={(e) => {
+                                setHoveredBox(box);
+                                setTooltipPos({ x: e.clientX, y: e.clientY });
+                              }}
+                              onMouseMove={(e) =>
+                                setTooltipPos({ x: e.clientX, y: e.clientY })
+                              }
+                              onMouseLeave={() => setHoveredBox(null)}
+                              style={{
+                                position: 'absolute',
+                                left: px,
+                                top: pz,
+                                width: pw,
+                                height: Math.max(ph, 1),
+                                background: box.color,
+                                opacity,
+                                borderRadius: 3,
+                                cursor: 'pointer',
+                                overflow: 'hidden',
+                                border: isHovered
+                                  ? '2px solid white'
+                                  : '1px solid rgba(255,255,255,0.5)',
+                                boxShadow: isHovered
+                                  ? `0 0 0 2px ${box.color}`
+                                  : 'none',
+                                zIndex: isHovered
+                                  ? 20
+                                  : 10 - Math.floor((box.y / ct.width) * 10),
+                                transition: 'all 0.15s ease',
+                              }}
+                            >
+                              {pw > 24 && ph > 16 && (
+                                <div
+                                  style={{
+                                    color: 'white',
+                                    fontSize: 7,
+                                    fontWeight: 700,
+                                    padding: '2px 3px',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                    textShadow: '0 1px 2px rgba(0,0,0,0.3)',
+                                  }}
+                                >
+                                  {box.cargoName || '화물'}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                    </div>
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        fontSize: 10,
+                        color: theme.textMuted,
+                        marginTop: 4,
+                      }}
+                    >
+                      <span>0cm</span>
+                      <span>{ct.length}cm</span>
+                    </div>
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, color: theme.textMuted }}>
+                  💡 박스 위에 마우스를 올리면 상세 정보 · NO: 완전다단불가 ·
+                  NT: 상단적재불가
+                </div>
+              </div>
+            );
+          })}
+
+          {/* 범례 */}
+          <div
             style={{
-              padding: '12px 28px',
-              borderRadius: 8,
-              border: '2px solid #4f8ef7',
               background: 'white',
-              color: '#4f8ef7',
-              fontWeight: 700,
-              cursor: 'pointer',
-              fontSize: 14,
+              borderRadius: 16,
+              padding: 20,
+              marginBottom: 20,
+              boxShadow: theme.shadow,
+              border: `1px solid ${theme.border}`,
             }}
           >
-            ← 다시 입력
-          </button>
-          <button
+            <div
+              style={{
+                fontSize: 12,
+                fontWeight: 700,
+                color: theme.textSecondary,
+                marginBottom: 12,
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px',
+              }}
+            >
+              범례
+            </div>
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+              {cargoColors.map((c) => (
+                <div
+                  key={c.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    background: theme.bg,
+                    padding: '6px 12px',
+                    borderRadius: 20,
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 12,
+                      height: 12,
+                      borderRadius: 4,
+                      background: c.color,
+                    }}
+                  />
+                  <span
+                    style={{ fontSize: 12, color: theme.text, fontWeight: 500 }}
+                  >
+                    {c.name || '(미입력)'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* 품목별 요약 */}
+          <div
             style={{
-              flex: 1,
-              padding: '12px 28px',
-              borderRadius: 8,
-              border: 'none',
-              background: '#ccc',
-              color: 'white',
-              fontWeight: 700,
-              fontSize: 14,
-              cursor: 'not-allowed',
+              background: 'white',
+              borderRadius: 16,
+              padding: 24,
+              marginBottom: 24,
+              boxShadow: theme.shadow,
+              border: `1px solid ${theme.border}`,
             }}
           >
-            📄 PDF 저장 (다음 단계)
+            <div
+              style={{
+                fontSize: 13,
+                fontWeight: 700,
+                color: theme.text,
+                marginBottom: 16,
+              }}
+            >
+              품목별 요약
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table
+                style={{
+                  width: '100%',
+                  borderCollapse: 'collapse',
+                  fontSize: 13,
+                }}
+              >
+                <thead>
+                  <tr>
+                    {[
+                      '품명',
+                      '수량',
+                      '단위CBM',
+                      '총CBM',
+                      '중량(kg)',
+                      '적재옵션',
+                    ].map((h) => (
+                      <th
+                        key={h}
+                        style={{
+                          padding: '10px 12px',
+                          textAlign: 'left',
+                          color: theme.textMuted,
+                          fontWeight: 600,
+                          fontSize: 11,
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.5px',
+                          borderBottom: `2px solid ${theme.border}`,
+                        }}
+                      >
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {cargos.map((c, i) => (
+                    <tr
+                      key={c.id}
+                      style={{ borderBottom: `1px solid ${theme.border}` }}
+                    >
+                      <td
+                        style={{
+                          padding: '12px',
+                          fontWeight: 600,
+                          color: theme.text,
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8,
+                          }}
+                        >
+                          <div
+                            style={{
+                              width: 10,
+                              height: 10,
+                              borderRadius: 3,
+                              background: COLORS[i % COLORS.length],
+                              flexShrink: 0,
+                            }}
+                          />
+                          {c.name || '(미입력)'}
+                        </div>
+                      </td>
+                      <td
+                        style={{ padding: '12px', color: theme.textSecondary }}
+                      >
+                        {c.quantity}박스
+                      </td>
+                      <td
+                        style={{ padding: '12px', color: theme.textSecondary }}
+                      >
+                        {(
+                          (c.length / 100) *
+                          (c.width / 100) *
+                          (c.height / 100)
+                        ).toFixed(3)}
+                      </td>
+                      <td
+                        style={{
+                          padding: '12px',
+                          color: theme.primary,
+                          fontWeight: 700,
+                        }}
+                      >
+                        {calcCbm(c).toFixed(3)}
+                      </td>
+                      <td
+                        style={{ padding: '12px', color: theme.textSecondary }}
+                      >
+                        {c.weight}kg
+                      </td>
+                      <td style={{ padding: '12px' }}>
+                        {c.noStack ? (
+                          <span
+                            style={{
+                              padding: '4px 10px',
+                              borderRadius: 20,
+                              fontSize: 11,
+                              fontWeight: 600,
+                              background: '#fef2f2',
+                              color: theme.danger,
+                            }}
+                          >
+                            ❌ 완전 다단불가
+                          </span>
+                        ) : c.noTopLoad ? (
+                          <span
+                            style={{
+                              padding: '4px 10px',
+                              borderRadius: 20,
+                              fontSize: 11,
+                              fontWeight: 600,
+                              background: '#fffbeb',
+                              color: theme.warning,
+                            }}
+                          >
+                            ⚠️ 상단 적재
+                          </span>
+                        ) : (
+                          <span
+                            style={{
+                              padding: '4px 10px',
+                              borderRadius: 20,
+                              fontSize: 11,
+                              fontWeight: 600,
+                              background: '#f0fdf4',
+                              color: theme.success,
+                            }}
+                          >
+                            ✅ 가능
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <button
+            onClick={handleReset}
+            style={{
+              width: '100%',
+              padding: 14,
+              borderRadius: 12,
+              border: `1.5px solid ${theme.border}`,
+              background: 'white',
+              color: theme.textSecondary,
+              fontWeight: 600,
+              fontSize: 14,
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+            }}
+          >
+            🗑️ 초기화하고 새로 시작
           </button>
         </div>
 
@@ -1920,55 +2408,90 @@ export default function Home() {
             setShowRecords={setShowRecords}
             loadRecord={loadRecord}
             deleteRecord={deleteRecord}
+            duplicateRecord={duplicateRecord}
+            editingRecord={editingRecord}
+            setEditingRecord={setEditingRecord}
+            saveTitle={saveTitle}
+            setSaveTitle={setSaveTitle}
+            updateRecord={updateRecord}
+            saving={saving}
+            saveSuccess={saveSuccess}
           />
         )}
-      </main>
+      </div>
     );
   }
 
+  // ── 입력 페이지 ──────────────────────────────────────
   return (
-    <main
+    <div
       style={{
-        fontFamily: 'sans-serif',
-        maxWidth: 960,
-        margin: '0 auto',
-        padding: 24,
-        position: 'relative',
+        minHeight: '100vh',
+        background: theme.bg,
+        fontFamily: '-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
       }}
     >
-      <div
+      {/* 네비게이션 */}
+      <nav
         style={{
+          background: 'white',
+          borderBottom: `1px solid ${theme.border}`,
+          padding: '0 32px',
+          height: 64,
           display: 'flex',
+          alignItems: 'center',
           justifyContent: 'space-between',
-          alignItems: 'flex-start',
-          marginBottom: 20,
+          position: 'sticky',
+          top: 0,
+          zIndex: 100,
+          boxShadow: '0 1px 0 rgba(0,0,0,0.05)',
         }}
       >
-        <div>
-          <h1 style={{ fontSize: 24, fontWeight: 800, marginBottom: 4 }}>
-            🚢 Container Load Plan
-          </h1>
-          <p style={{ color: '#888' }}>
-            화물을 입력하면 최적 컨테이너를 자동으로 선택해드립니다.
-          </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div
+            style={{
+              width: 36,
+              height: 36,
+              background: 'linear-gradient(135deg,#44403c,#57534e)',
+              borderRadius: 10,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 18,
+            }}
+          >
+            🚢
+          </div>
+          <span style={{ fontWeight: 800, fontSize: 16, color: theme.text }}>
+            CLP Studio
+          </span>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           {user ? (
             <>
-              <span style={{ fontSize: 12, color: '#888' }}>
-                {user.email?.replace('@clp.app', '')}
+              <span
+                style={{
+                  fontSize: 13,
+                  color: theme.textSecondary,
+                  background: theme.bg,
+                  padding: '6px 12px',
+                  borderRadius: 8,
+                }}
+              >
+                👤 {user.email?.replace('@clp.app', '')}
               </span>
               <button
                 onClick={loadRecords}
                 style={{
-                  padding: '8px 14px',
-                  borderRadius: 8,
-                  border: '1px solid #4f8ef7',
-                  background: 'white',
-                  color: '#4f8ef7',
-                  fontSize: 12,
+                  padding: '8px 16px',
+                  borderRadius: 10,
+                  border: `1.5px solid ${theme.primary}`,
+                  background: theme.primaryLight,
+                  color: theme.primary,
+                  fontSize: 13,
                   fontWeight: 700,
                   cursor: 'pointer',
+                  fontFamily: 'inherit',
                 }}
               >
                 📋 내 기록
@@ -1977,12 +2500,13 @@ export default function Home() {
                 onClick={handleLogout}
                 style={{
                   padding: '8px 14px',
-                  borderRadius: 8,
-                  border: '1px solid #ddd',
+                  borderRadius: 10,
+                  border: `1px solid ${theme.border}`,
                   background: 'white',
-                  color: '#888',
-                  fontSize: 12,
+                  color: theme.textSecondary,
+                  fontSize: 13,
                   cursor: 'pointer',
+                  fontFamily: 'inherit',
                 }}
               >
                 로그아웃
@@ -1992,328 +2516,468 @@ export default function Home() {
             <button
               onClick={() => setShowAuth(true)}
               style={{
-                padding: '8px 16px',
-                borderRadius: 8,
+                padding: '8px 18px',
+                borderRadius: 10,
                 border: 'none',
-                background: '#4f8ef7',
+                background: 'linear-gradient(135deg,#44403c,#57534e)',
                 color: 'white',
-                fontSize: 12,
+                fontSize: 13,
                 fontWeight: 700,
                 cursor: 'pointer',
+                fontFamily: 'inherit',
               }}
             >
               🔐 로그인 / 회원가입
             </button>
           )}
-          <div style={{ fontWeight: 'bold', fontSize: 14, color: '#555' }}>
+          <div
+            style={{
+              fontWeight: 800,
+              fontSize: 13,
+              color: theme.textMuted,
+              background: theme.bg,
+              padding: '6px 12px',
+              borderRadius: 8,
+            }}
+          >
             MADE BY ZERO
           </div>
         </div>
-      </div>
+      </nav>
 
-      <section
-        style={{
-          background: 'white',
-          borderRadius: 12,
-          padding: 20,
-          marginBottom: 20,
-          boxShadow: '0 2px 8px rgba(0,0,0,0.07)',
-        }}
-      >
-        <h2
+      <div style={{ maxWidth: 1000, margin: '0 auto', padding: '40px 24px' }}>
+        {/* 히어로 섹션 */}
+        <div style={{ textAlign: 'center', marginBottom: 48 }}>
+          <div
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              background: theme.primaryLight,
+              color: theme.primary,
+              padding: '6px 16px',
+              borderRadius: 20,
+              fontSize: 12,
+              fontWeight: 600,
+              marginBottom: 16,
+            }}
+          >
+            ✨ AI 기반 3D 컨테이너 최적화
+          </div>
+          <h1
+            style={{
+              fontSize: 36,
+              fontWeight: 900,
+              color: theme.text,
+              marginBottom: 12,
+              lineHeight: 1.2,
+            }}
+          >
+            화물을 입력하면
+            <br />
+            <span
+              style={{ color: '#44403c', borderBottom: '3px solid #a8a29e' }}
+            >
+              최적의 적재 방법
+            </span>
+            을 찾아드려요
+          </h1>
+          <p
+            style={{
+              fontSize: 15,
+              color: theme.textSecondary,
+              maxWidth: 480,
+              margin: '0 auto',
+            }}
+          >
+            20GP · 40HQ 컨테이너를 자동으로 선택하고, 3D 배치 알고리즘으로 최대
+            효율을 계산해요
+          </p>
+        </div>
+
+        {/* 컨테이너 정보 */}
+        <div
           style={{
-            fontSize: 13,
-            fontWeight: 700,
-            color: '#555',
-            marginBottom: 4,
-            textTransform: 'uppercase',
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr',
+            gap: 16,
+            marginBottom: 28,
           }}
         >
-          컨테이너 자동 선택 기준
-        </h2>
-        <p style={{ fontSize: 12, color: '#aaa', marginBottom: 12 }}>
-          20GP 1개에 들어가면 20GP, 나머지는 40HQ를 사용합니다.
-        </p>
-        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           {CONTAINER_TYPES.map((ct) => (
             <div
               key={ct.name}
               style={{
-                background: '#f7f9fc',
-                borderRadius: 8,
-                padding: '8px 16px',
-                fontSize: 12,
+                background: 'white',
+                borderRadius: 16,
+                padding: 20,
+                boxShadow: theme.shadow,
+                border: `1px solid ${theme.border}`,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 16,
               }}
             >
-              <strong>{ct.name}</strong>&nbsp;
-              <span style={{ color: '#888' }}>
-                최대 {ct.maxCbm} CBM / {ct.maxWeight.toLocaleString()} kg
-              </span>
+              <div
+                style={{
+                  width: 48,
+                  height: 48,
+                  background:
+                    ct.name === '40HQ'
+                      ? 'linear-gradient(135deg,#44403c,#57534e)'
+                      : 'linear-gradient(135deg,#4d7c60,#6da882)',
+                  borderRadius: 14,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: 22,
+                  flexShrink: 0,
+                }}
+              >
+                📦
+              </div>
+              <div>
+                <div
+                  style={{
+                    fontWeight: 800,
+                    fontSize: 16,
+                    color: theme.text,
+                    marginBottom: 2,
+                  }}
+                >
+                  {ct.name}
+                </div>
+                <div style={{ fontSize: 12, color: theme.textMuted }}>
+                  최대 {ct.maxCbm} CBM · {ct.maxWeight.toLocaleString()} kg
+                </div>
+              </div>
             </div>
           ))}
         </div>
-      </section>
 
-      <section
-        style={{
-          background: 'white',
-          borderRadius: 12,
-          padding: 20,
-          marginBottom: 20,
-          boxShadow: '0 2px 8px rgba(0,0,0,0.07)',
-        }}
-      >
-        <h2
-          style={{
-            fontSize: 13,
-            fontWeight: 700,
-            color: '#555',
-            marginBottom: 12,
-            textTransform: 'uppercase',
-          }}
-        >
-          화물 품목 입력
-        </h2>
+        {/* 화물 입력 섹션 */}
         <div
           style={{
-            marginBottom: 16,
-            display: 'flex',
-            gap: 8,
-            alignItems: 'center',
+            background: 'white',
+            borderRadius: 20,
+            padding: 28,
+            marginBottom: 20,
+            boxShadow: theme.shadow,
+            border: `1px solid ${theme.border}`,
           }}
         >
-          <input
-            id="quickInput"
-            name="quickInput"
-            value={quickInput}
-            onChange={(e) => setQuickInput(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleQuickAdd()}
-            placeholder="예: 291x111x142(2), 100x80x60(5)"
+          <div
             style={{
-              border: '1px solid #ddd',
-              padding: '8px 10px',
-              borderRadius: 6,
-              width: 280,
-              fontSize: 13,
-            }}
-          />
-          <button
-            onClick={handleQuickAdd}
-            style={{
-              padding: '8px 14px',
-              background: '#4f8ef7',
-              color: 'white',
-              border: 'none',
-              borderRadius: 6,
-              cursor: 'pointer',
-              fontWeight: 700,
-              fontSize: 13,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: 20,
             }}
           >
-            빠른 추가
-          </button>
-          <span style={{ fontSize: 11, color: '#aaa' }}>
-            쉼표로 여러 개 한번에 입력 가능
-          </span>
-        </div>
+            <div>
+              <h2
+                style={{
+                  fontSize: 18,
+                  fontWeight: 800,
+                  color: theme.text,
+                  marginBottom: 4,
+                }}
+              >
+                화물 목록
+              </h2>
+              <p style={{ fontSize: 13, color: theme.textMuted }}>
+                총 {cargos.length}개 품목 · {totalCbm.toFixed(3)} CBM ·{' '}
+                {totalWeight.toLocaleString()} kg
+              </p>
+            </div>
+            {/* 빠른 입력 */}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input
+                id="quickInput"
+                name="quickInput"
+                value={quickInput}
+                onChange={(e) => setQuickInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleQuickAdd()}
+                placeholder="291x111x142(2)"
+                style={{
+                  padding: '9px 14px',
+                  borderRadius: 10,
+                  border: `1.5px solid ${theme.border}`,
+                  fontSize: 13,
+                  outline: 'none',
+                  width: 200,
+                  fontFamily: 'inherit',
+                }}
+                onFocus={(e) => (e.target.style.borderColor = theme.primary)}
+                onBlur={(e) => (e.target.style.borderColor = theme.border)}
+              />
+              <button
+                onClick={handleQuickAdd}
+                style={{
+                  padding: '9px 16px',
+                  background: theme.primaryLight,
+                  color: theme.primary,
+                  border: `1.5px solid ${theme.primary}`,
+                  borderRadius: 10,
+                  cursor: 'pointer',
+                  fontWeight: 700,
+                  fontSize: 13,
+                  fontFamily: 'inherit',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                + 빠른 추가
+              </button>
+            </div>
+          </div>
 
-        <div style={{ overflowX: 'auto' }}>
-          <table
-            style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}
-          >
-            <thead>
-              <tr style={{ background: '#f7f9fc' }}>
-                {[
-                  '품명',
-                  '길이(cm)',
-                  '폭(cm)',
-                  '높이(cm)',
-                  '중량(kg)',
-                  '수량',
-                  'CBM',
-                  '다단불가',
-                  '상단적재',
-                  '',
-                ].map((h) => (
-                  <th
-                    key={h}
-                    style={{
-                      padding: '10px',
-                      textAlign: 'left',
-                      color: '#666',
-                      fontWeight: 600,
-                      borderBottom: '2px solid #eee',
-                    }}
-                  >
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {cargos.map((c) => (
-                <tr key={c.id}>
-                  <td style={{ padding: '8px 10px' }}>
-                    <input
-                      id={`name-${c.id}`}
-                      name={`name-${c.id}`}
-                      value={c.name}
-                      onChange={(e) =>
-                        updateCargo(c.id, 'name', e.target.value)
-                      }
-                      placeholder="품명"
-                      style={inputStyle}
-                    />
-                  </td>
-                  {(
-                    ['length', 'width', 'height', 'weight', 'quantity'] as const
-                  ).map((field) => (
-                    <td key={field} style={{ padding: '8px 10px' }}>
-                      <input
-                        id={`${field}-${c.id}`}
-                        name={`${field}-${c.id}`}
-                        type="number"
-                        value={c[field] || ''}
-                        onChange={(e) =>
-                          updateCargo(c.id, field, Number(e.target.value))
-                        }
-                        style={{ ...inputStyle, width: 70 }}
-                      />
-                    </td>
-                  ))}
-                  <td
-                    style={{
-                      padding: '8px 10px',
-                      color: '#4f8ef7',
-                      fontWeight: 700,
-                    }}
-                  >
-                    {calcCbm(c).toFixed(3)}
-                  </td>
-                  <td style={{ padding: '8px 10px', textAlign: 'center' }}>
-                    <input
-                      type="checkbox"
-                      checked={c.noStack}
-                      onChange={(e) => {
-                        setCargos((prev) =>
-                          prev.map((item) =>
-                            item.id === c.id
-                              ? {
-                                  ...item,
-                                  noStack: e.target.checked,
-                                  noTopLoad: e.target.checked
-                                    ? false
-                                    : item.noTopLoad,
-                                }
-                              : item
-                          )
-                        );
-                      }}
-                    />
-                  </td>
-                  <td style={{ padding: '8px 10px', textAlign: 'center' }}>
-                    <input
-                      type="checkbox"
-                      checked={c.noTopLoad}
-                      onChange={(e) => {
-                        setCargos((prev) =>
-                          prev.map((item) =>
-                            item.id === c.id
-                              ? {
-                                  ...item,
-                                  noTopLoad: e.target.checked,
-                                  noStack: e.target.checked
-                                    ? false
-                                    : item.noStack,
-                                }
-                              : item
-                          )
-                        );
-                      }}
-                    />
-                  </td>
-                  <td style={{ padding: '8px 10px' }}>
-                    <button
-                      onClick={() => removeCargo(c.id)}
+          <div style={{ overflowX: 'auto' }}>
+            <table
+              style={{
+                width: '100%',
+                borderCollapse: 'collapse',
+                fontSize: 13,
+              }}
+            >
+              <thead>
+                <tr style={{ background: theme.bg }}>
+                  {[
+                    '품명',
+                    '길이(cm)',
+                    '폭(cm)',
+                    '높이(cm)',
+                    '중량(kg)',
+                    '수량',
+                    'CBM',
+                    '다단불가',
+                    '상단적재',
+                    '',
+                  ].map((h) => (
+                    <th
+                      key={h}
                       style={{
-                        background: 'none',
-                        border: 'none',
-                        color: '#e04040',
-                        cursor: 'pointer',
-                        fontSize: 16,
+                        padding: '10px 12px',
+                        textAlign: 'left',
+                        color: theme.textMuted,
+                        fontWeight: 600,
+                        fontSize: 11,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.3px',
+                        borderBottom: `2px solid ${theme.border}`,
+                        whiteSpace: 'nowrap',
                       }}
                     >
-                      ✕
-                    </button>
-                  </td>
+                      {h}
+                    </th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div style={{ fontSize: 11, color: '#aaa', marginTop: 8 }}>
-          💡 다단불가: 바닥에만 배치, 위에도 못 올림 &nbsp;|&nbsp; 상단적재:
-          쌓일 수 있지만 위에는 못 올림
-        </div>
-        <button
-          onClick={addCargo}
-          style={{
-            marginTop: 10,
-            background: 'none',
-            border: 'none',
-            color: '#4f8ef7',
-            fontWeight: 700,
-            cursor: 'pointer',
-            fontSize: 13,
-          }}
-        >
-          + 품목 추가
-        </button>
-        <div
-          style={{
-            borderTop: '1px solid #eee',
-            marginTop: 16,
-            paddingTop: 14,
-            display: 'flex',
-            gap: 24,
-            fontSize: 13,
-            color: '#555',
-            flexWrap: 'wrap',
-          }}
-        >
-          <span>
-            총 CBM:{' '}
-            <strong style={{ color: '#4f8ef7' }}>{totalCbm.toFixed(3)}</strong>
-          </span>
-          <span>
-            총 중량:{' '}
-            <strong style={{ color: '#4f8ef7' }}>
-              {totalWeight.toLocaleString()} kg
-            </strong>
-          </span>
-        </div>
-      </section>
+              </thead>
+              <tbody>
+                {cargos.map((c, idx) => (
+                  <tr
+                    key={c.id}
+                    style={{ borderBottom: `1px solid ${theme.border}` }}
+                  >
+                    <td style={{ padding: '10px 12px' }}>
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: 2,
+                            background: COLORS[idx % COLORS.length],
+                            flexShrink: 0,
+                          }}
+                        />
+                        <input
+                          id={`name-${c.id}`}
+                          name={`name-${c.id}`}
+                          value={c.name}
+                          onChange={(e) =>
+                            updateCargo(c.id, 'name', e.target.value)
+                          }
+                          placeholder="품명"
+                          style={{ ...inputStyle, width: 80 }}
+                        />
+                      </div>
+                    </td>
+                    {(
+                      [
+                        'length',
+                        'width',
+                        'height',
+                        'weight',
+                        'quantity',
+                      ] as const
+                    ).map((field) => (
+                      <td key={field} style={{ padding: '10px 12px' }}>
+                        <input
+                          id={`${field}-${c.id}`}
+                          name={`${field}-${c.id}`}
+                          type="number"
+                          value={c[field] || ''}
+                          onChange={(e) =>
+                            updateCargo(c.id, field, Number(e.target.value))
+                          }
+                          style={{ ...inputStyle, width: 65 }}
+                        />
+                      </td>
+                    ))}
+                    <td
+                      style={{
+                        padding: '10px 12px',
+                        color: theme.primary,
+                        fontWeight: 700,
+                        fontSize: 12,
+                      }}
+                    >
+                      {calcCbm(c).toFixed(3)}
+                    </td>
+                    <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                      <input
+                        type="checkbox"
+                        checked={c.noStack}
+                        onChange={(e) => {
+                          setCargos((prev) =>
+                            prev.map((item) =>
+                              item.id === c.id
+                                ? {
+                                    ...item,
+                                    noStack: e.target.checked,
+                                    noTopLoad: e.target.checked
+                                      ? false
+                                      : item.noTopLoad,
+                                  }
+                                : item
+                            )
+                          );
+                        }}
+                        style={{
+                          width: 16,
+                          height: 16,
+                          cursor: 'pointer',
+                          accentColor: theme.danger,
+                        }}
+                      />
+                    </td>
+                    <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                      <input
+                        type="checkbox"
+                        checked={c.noTopLoad}
+                        onChange={(e) => {
+                          setCargos((prev) =>
+                            prev.map((item) =>
+                              item.id === c.id
+                                ? {
+                                    ...item,
+                                    noTopLoad: e.target.checked,
+                                    noStack: e.target.checked
+                                      ? false
+                                      : item.noStack,
+                                  }
+                                : item
+                            )
+                          );
+                        }}
+                        style={{
+                          width: 16,
+                          height: 16,
+                          cursor: 'pointer',
+                          accentColor: theme.warning,
+                        }}
+                      />
+                    </td>
+                    <td style={{ padding: '10px 12px' }}>
+                      <button
+                        onClick={() => removeCargo(c.id)}
+                        style={{
+                          width: 28,
+                          height: 28,
+                          borderRadius: 8,
+                          border: `1px solid ${theme.border}`,
+                          background: 'white',
+                          color: theme.textMuted,
+                          cursor: 'pointer',
+                          fontSize: 14,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontFamily: 'inherit',
+                        }}
+                      >
+                        ✕
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
 
-      <button
-        onClick={calculate}
-        disabled={calculating}
-        style={{
-          width: '100%',
-          padding: 14,
-          borderRadius: 8,
-          border: 'none',
-          background: calculating ? '#93c5fd' : '#4f8ef7',
-          color: 'white',
-          fontWeight: 700,
-          fontSize: 15,
-          cursor: calculating ? 'not-allowed' : 'pointer',
-          transition: 'all 0.2s',
-        }}
-      >
-        {calculating
-          ? '⏳ 최적 배치 계산 중... (잠시만 기다려주세요)'
-          : '🔍 최적 적재 계산하기'}
-      </button>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginTop: 16,
+              paddingTop: 16,
+              borderTop: `1px solid ${theme.border}`,
+            }}
+          >
+            <button
+              onClick={addCargo}
+              style={{
+                padding: '8px 16px',
+                borderRadius: 10,
+                border: `1.5px dashed ${theme.border}`,
+                background: 'white',
+                color: theme.textSecondary,
+                fontWeight: 600,
+                fontSize: 13,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >
+              + 품목 추가
+            </button>
+            <div style={{ fontSize: 12, color: theme.textMuted }}>
+              💡 다단불가: 바닥에만, 위에도 못 올림 &nbsp;|&nbsp; 상단적재: 쌓일
+              수 있지만 위에 못 올림
+            </div>
+          </div>
+        </div>
+
+        {/* 계산 버튼 */}
+        <button
+          onClick={calculate}
+          disabled={calculating}
+          style={{
+            width: '100%',
+            padding: 18,
+            borderRadius: 16,
+            border: 'none',
+            background: calculating
+              ? '#a8a29e'
+              : 'linear-gradient(135deg,#44403c,#57534e)',
+            color: 'white',
+            fontWeight: 800,
+            fontSize: 16,
+            cursor: calculating ? 'not-allowed' : 'pointer',
+            fontFamily: 'inherit',
+            boxShadow: calculating ? 'none' : '0 8px 24px rgba(68,64,60,0.2)',
+            transition: 'all 0.2s',
+            letterSpacing: '0.3px',
+          }}
+        >
+          {calculating ? '⏳ 최적 배치 계산 중...' : '🔍 최적 적재 계산하기'}
+        </button>
+      </div>
 
       {showAuth && (
         <AuthModal
@@ -2337,17 +3001,27 @@ export default function Home() {
           setShowRecords={setShowRecords}
           loadRecord={loadRecord}
           deleteRecord={deleteRecord}
+          duplicateRecord={duplicateRecord}
+          editingRecord={editingRecord}
+          setEditingRecord={setEditingRecord}
+          saveTitle={saveTitle}
+          setSaveTitle={setSaveTitle}
+          updateRecord={updateRecord}
+          saving={saving}
+          saveSuccess={saveSuccess}
         />
       )}
-    </main>
+    </div>
   );
 }
 
 const inputStyle: React.CSSProperties = {
-  border: '1px solid #e0e0e0',
-  borderRadius: 6,
-  padding: '6px 10px',
+  padding: '8px 10px',
+  borderRadius: 8,
+  border: `1.5px solid #e2e8f0`,
   fontSize: 13,
   width: 90,
   outline: 'none',
+  fontFamily: 'inherit',
+  transition: 'border-color 0.2s',
 };

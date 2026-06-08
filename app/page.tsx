@@ -443,7 +443,7 @@ function AuthModal({
           {authMode === 'login' ? '🔐 로그인' : '📝 회원가입'}
         </h2>
         <p style={{ fontSize: 12, color: '#aaa', marginBottom: 24 }}>
-          CLP 기록을 저장하고 불러올 수 있어요
+          아이디와 비밀번호로 가입하면 CLP 기록을 저장할 수 있어요
         </p>
         <div style={{ marginBottom: 12 }}>
           <label
@@ -455,15 +455,15 @@ function AuthModal({
               marginBottom: 4,
             }}
           >
-            이메일
+            아이디
           </label>
           <input
             id="auth-email"
             name="auth-email"
-            type="email"
+            type="text"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            placeholder="example@email.com"
+            placeholder="아이디 입력 (3자 이상)"
             style={{
               width: '100%',
               padding: '10px 12px',
@@ -773,24 +773,40 @@ export default function Home() {
     return () => subscription.unsubscribe();
   }, []);
 
+  // 아이디를 내부적으로 이메일 형식으로 변환
+  const toEmail = (id: string) => `${id.trim()}@clp.app`;
+
   const handleLogin = async () => {
     setAuthLoading(true);
     setAuthError('');
     const { error } = await supabase.auth.signInWithPassword({
-      email,
+      email: toEmail(email),
       password,
     });
-    if (error) setAuthError(error.message);
+    if (error) setAuthError('아이디 또는 비밀번호가 틀렸어요.');
     else setShowAuth(false);
     setAuthLoading(false);
   };
 
   const handleSignup = async () => {
+    if (email.trim().length < 3) {
+      setAuthError('아이디는 3자 이상이어야 해요.');
+      setAuthLoading(false);
+      return;
+    }
+    if (password.length < 6) {
+      setAuthError('비밀번호는 6자 이상이어야 해요.');
+      setAuthLoading(false);
+      return;
+    }
     setAuthLoading(true);
     setAuthError('');
-    const { error } = await supabase.auth.signUp({ email, password });
+    const { error } = await supabase.auth.signUp({
+      email: toEmail(email),
+      password,
+    });
     if (error) setAuthError(error.message);
-    else setAuthError('이메일을 확인해주세요! 인증 후 로그인 가능합니다.');
+    else setShowAuth(false); // 이메일 인증 끄면 바로 로그인
     setAuthLoading(false);
   };
 
@@ -1064,7 +1080,7 @@ export default function Home() {
             {user ? (
               <>
                 <span style={{ fontSize: 12, color: '#888' }}>
-                  {user.email}
+                  {user.email?.replace('@clp.app', '')}
                 </span>
                 <button
                   onClick={loadRecords}
@@ -1913,7 +1929,9 @@ export default function Home() {
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           {user ? (
             <>
-              <span style={{ fontSize: 12, color: '#888' }}>{user.email}</span>
+              <span style={{ fontSize: 12, color: '#888' }}>
+                {user.email?.replace('@clp.app', '')}
+              </span>
               <button
                 onClick={loadRecords}
                 style={{

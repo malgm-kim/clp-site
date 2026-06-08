@@ -30,7 +30,8 @@ type CargoItem = {
   height: number;
   weight: number;
   quantity: number;
-  noStack: boolean;
+  noStack: boolean; // 완전 다단불가: 바닥에만, 위에도 못 올림
+  noTopLoad: boolean; // 상단가능: 쌓일 수 있지만 위에는 못 올림
 };
 
 type PlacedBox3D = {
@@ -45,6 +46,7 @@ type PlacedBox3D = {
   h: number;
   weight: number;
   noStack: boolean;
+  noTopLoad: boolean;
 };
 
 type ContainerLoad3D = {
@@ -68,10 +70,7 @@ type ClpRecord = {
   container_types: string[];
 };
 
-type User = {
-  id: string;
-  email: string;
-};
+type User = { id: string; email: string };
 
 const COLORS = [
   '#4f8ef7',
@@ -139,6 +138,7 @@ function canPlace(
   cW: number,
   cH: number,
   noStack: boolean,
+  noTopLoad: boolean,
   weight: number
 ): boolean {
   if (x + l > cL || y + w > cW || z + h > cH) return false;
@@ -154,17 +154,25 @@ function canPlace(
     )
       return false;
   }
+
+  // ✅ 완전 다단불가: 반드시 바닥(z=0)에만 배치
+  if (noStack && z > 0) return false;
+
   if (z === 0) return true;
-  // 지지면 체크 완화: 30% 이상이면 허용
+
+  // 지지면 30% 이상
   if (calcSupportArea(boxes, x, y, z, l, w) < l * w * 0.3) return false;
+
   for (const b of boxes) {
+    // ✅ 완전 다단불가 OR 상단가능 박스 위에는 아무것도 못 올림
     if (
-      b.noStack &&
+      (b.noStack || b.noTopLoad) &&
       overlapsXY(x, y, l, w, b.x, b.y, b.l, b.w) &&
       Math.abs(b.z + b.h - z) < 0.1
     )
       return false;
   }
+
   for (const b of boxes) {
     if (!overlapsXY(x, y, l, w, b.x, b.y, b.l, b.w)) continue;
     if (Math.abs(b.z + b.h - z) > 0.1) continue;
@@ -191,11 +199,8 @@ function getExtremePoints(
     if (x >= 0 && y >= 0 && z >= 0 && x < cL && y < cW && z < cH)
       pts.add(`${Math.round(x)},${Math.round(y)},${Math.round(z)}`);
   };
-
   add(0, 0, 0);
-
   for (const b of boxes) {
-    // 기본 꼭짓점
     add(b.x + b.l, b.y, b.z);
     add(b.x, b.y + b.w, b.z);
     add(b.x, b.y, b.z + b.h);
@@ -203,25 +208,19 @@ function getExtremePoints(
     add(b.x + b.l, b.y, b.z + b.h);
     add(b.x, b.y + b.w, b.z + b.h);
     add(b.x + b.l, b.y + b.w, b.z + b.h);
-
-    // ✅ 투영점: 다른 박스 면에 현재 박스 좌표를 투영
     for (const o of boxes) {
       if (o === b) continue;
-      // x 투영
       add(b.x + b.l, o.y, b.z);
       add(b.x + b.l, o.y + o.w, b.z);
       add(b.x + b.l, o.y, b.z + b.h);
-      // y 투영
       add(b.x, b.y + b.w, o.z);
       add(b.x + b.l, b.y + b.w, o.z);
       add(b.x, b.y + b.w, o.z + o.h);
-      // z 투영
       add(b.x, o.y, b.z + b.h);
       add(b.x + b.l, o.y, b.z + b.h);
       add(b.x, o.y + o.w, b.z + b.h);
     }
   }
-
   return Array.from(pts)
     .map((s) => {
       const [x, y, z] = s.split(',').map(Number);
@@ -241,17 +240,6 @@ function calcCOG(boxes: PlacedBox3D[], cL: number, cW: number) {
   }
   if (tw === 0) return { x: 0.5, y: 0.5 };
   return { x: wx / tw / cL, y: wy / tw / cW };
-}
-
-function sortCargos(boxes: CargoItem[]): CargoItem[] {
-  return [...boxes].sort((a, b) => {
-    if (a.noStack !== b.noStack) return a.noStack ? -1 : 1;
-    const areaA = a.length * a.width,
-      areaB = b.length * b.width;
-    if (areaB !== areaA) return areaB - areaA;
-    if (b.weight !== a.weight) return b.weight - a.weight;
-    return b.length * b.width * b.height - a.length * a.width * a.height;
-  });
 }
 
 function pack3D(
@@ -294,6 +282,7 @@ function pack3D(
             ct.width,
             ct.height,
             cargo.noStack,
+            cargo.noTopLoad,
             cargo.weight
           )
         )
@@ -316,6 +305,7 @@ function pack3D(
         h: best.h,
         weight: cargo.weight,
         noStack: cargo.noStack,
+        noTopLoad: cargo.noTopLoad,
       });
     } else {
       remaining.push(cargo);
@@ -328,33 +318,27 @@ function buildContainerLoads(cargos: CargoItem[]): ContainerLoad3D[] {
   const ct20GP = CONTAINER_TYPES.find((ct) => ct.name === '20GP')!;
   const ct40HQ = CONTAINER_TYPES.find((ct) => ct.name === '40HQ')!;
 
-  // ✅ 여러 정렬 전략 정의
   const strategies = [
-    // 전략 1: 바닥 면적 큰 것 먼저 (기존)
     (boxes: CargoItem[]) =>
       [...boxes].sort((a, b) => {
         if (a.noStack !== b.noStack) return a.noStack ? -1 : 1;
         return b.length * b.width - a.length * a.width;
       }),
-    // 전략 2: 부피 큰 것 먼저
     (boxes: CargoItem[]) =>
       [...boxes].sort((a, b) => {
         if (a.noStack !== b.noStack) return a.noStack ? -1 : 1;
         return b.length * b.width * b.height - a.length * a.width * a.height;
       }),
-    // 전략 3: 높이 큰 것 먼저
     (boxes: CargoItem[]) =>
       [...boxes].sort((a, b) => {
         if (a.noStack !== b.noStack) return a.noStack ? -1 : 1;
         return b.height - a.height;
       }),
-    // 전략 4: 작은 것 먼저 (빈틈 채우기)
     (boxes: CargoItem[]) =>
       [...boxes].sort((a, b) => {
         if (a.noStack !== b.noStack) return a.noStack ? -1 : 1;
         return a.length * a.width * a.height - b.length * b.width * b.height;
       }),
-    // 전략 5: 긴 것 먼저
     (boxes: CargoItem[]) =>
       [...boxes].sort((a, b) => {
         if (a.noStack !== b.noStack) return a.noStack ? -1 : 1;
@@ -362,7 +346,6 @@ function buildContainerLoads(cargos: CargoItem[]): ContainerLoad3D[] {
       }),
   ];
 
-  // ✅ 단일 전략으로 전체 패킹 실행
   const runPacking = (
     strategy: (boxes: CargoItem[]) => CargoItem[]
   ): ContainerLoad3D[] => {
@@ -372,7 +355,6 @@ function buildContainerLoads(cargos: CargoItem[]): ContainerLoad3D[] {
     const loads: ContainerLoad3D[] = [];
     let containerId = 0,
       safety = 0;
-
     while (remaining.length > 0 && safety < 50) {
       safety++;
       const totalCbm = remaining.reduce(
@@ -380,23 +362,18 @@ function buildContainerLoads(cargos: CargoItem[]): ContainerLoad3D[] {
         0
       );
       const totalWeight = remaining.reduce((s, c) => s + c.weight, 0);
-
-      // 컨테이너 선택
       let selectedCt: (typeof CONTAINER_TYPES)[number];
       if (totalCbm <= ct20GP.maxCbm * 0.92 && totalWeight <= ct20GP.maxWeight) {
         selectedCt = ct20GP;
       } else {
         selectedCt = ct40HQ;
       }
-
       const sorted = strategy(remaining);
       const { boxes, remaining: leftover } = pack3D(sorted, cargos, selectedCt);
-
       if (boxes.length === 0) {
         remaining = leftover.slice(1);
         continue;
       }
-
       const cog = calcCOG(boxes, selectedCt.length, selectedCt.width);
       loads.push({
         containerId: containerId++,
@@ -412,19 +389,12 @@ function buildContainerLoads(cargos: CargoItem[]): ContainerLoad3D[] {
     return loads;
   };
 
-  // ✅ 모든 전략 시도 → 컨테이너 수 가장 적은 결과 선택
   let best: ContainerLoad3D[] | null = null;
-
   for (const strategy of strategies) {
     const result = runPacking(strategy);
-    if (!best || result.length < best.length) {
-      best = result;
-    }
-    // 이미 1개면 더 시도할 필요 없음
+    if (!best || result.length < best.length) best = result;
     if (best.length === 1) break;
   }
-
-  // containerId 재정렬
   return best!.map((load, i) => ({ ...load, containerId: i }));
 }
 
@@ -441,7 +411,6 @@ export default function Home() {
   const [saveTitle, setSaveTitle] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
-
   const [quickInput, setQuickInput] = useState('');
   const [cargos, setCargos] = useState<CargoItem[]>([
     {
@@ -453,14 +422,15 @@ export default function Home() {
       weight: 0,
       quantity: 1,
       noStack: false,
+      noTopLoad: false,
     },
   ]);
   const [page, setPage] = useState<'input' | 'result'>('input');
   const [containerLoads, setContainerLoads] = useState<ContainerLoad3D[]>([]);
   const [hoveredBox, setHoveredBox] = useState<PlacedBox3D | null>(null);
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
+  const [calculating, setCalculating] = useState(false);
 
-  // 로그인 상태 확인
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user)
@@ -476,7 +446,6 @@ export default function Home() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // 로그인
   const handleLogin = async () => {
     setAuthLoading(true);
     setAuthError('');
@@ -489,7 +458,6 @@ export default function Home() {
     setAuthLoading(false);
   };
 
-  // 회원가입
   const handleSignup = async () => {
     setAuthLoading(true);
     setAuthError('');
@@ -499,13 +467,11 @@ export default function Home() {
     setAuthLoading(false);
   };
 
-  // 로그아웃
   const handleLogout = async () => {
     await supabase.auth.signOut();
     setUser(null);
   };
 
-  // CLP 저장
   const handleSave = async () => {
     if (!user) {
       setShowAuth(true);
@@ -537,7 +503,6 @@ export default function Home() {
     setSaving(false);
   };
 
-  // 기록 불러오기
   const loadRecords = async () => {
     if (!user) {
       setShowAuth(true);
@@ -552,14 +517,11 @@ export default function Home() {
     setShowRecords(true);
   };
 
-  // 기록 불러와서 입력창에 세팅
   const loadRecord = (record: ClpRecord) => {
     setCargos(record.cargos);
     setShowRecords(false);
     setPage('input');
   };
-
-  // 기록 삭제
   const deleteRecord = async (id: string) => {
     await supabase.from('clp_records').delete().eq('id', id);
     setRecords((prev) => prev.filter((r) => r.id !== id));
@@ -576,6 +538,7 @@ export default function Home() {
         weight: 0,
         quantity: 1,
         noStack: false,
+        noTopLoad: false,
       },
     ]);
     setContainerLoads([]);
@@ -625,6 +588,7 @@ export default function Home() {
         ...p,
         weight: 0,
         noStack: false,
+        noTopLoad: false,
       })),
     ]);
     setQuickInput('');
@@ -642,6 +606,7 @@ export default function Home() {
         weight: 0,
         quantity: 1,
         noStack: false,
+        noTopLoad: false,
       },
     ]);
   const removeCargo = (id: number) =>
@@ -652,8 +617,13 @@ export default function Home() {
     (c.length / 100) * (c.width / 100) * (c.height / 100) * c.quantity;
   const totalCbm = cargos.reduce((s, c) => s + calcCbm(c), 0);
   const totalWeight = cargos.reduce((s, c) => s + c.weight * c.quantity, 0);
-  const calculate = () => {
-    setContainerLoads(buildContainerLoads(cargos));
+
+  const calculate = async () => {
+    setCalculating(true);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const result = buildContainerLoads(cargos);
+    setContainerLoads(result);
+    setCalculating(false);
     setPage('result');
   };
 
@@ -707,7 +677,10 @@ export default function Home() {
           중량: {box.weight}kg
         </div>
         {box.noStack && (
-          <div style={{ color: '#ffcccc', fontSize: 11 }}>❌ 다단 불가</div>
+          <div style={{ color: '#ffcccc', fontSize: 11 }}>❌ 완전 다단불가</div>
+        )}
+        {box.noTopLoad && (
+          <div style={{ color: '#ffcccc', fontSize: 11 }}>⚠️ 상단가능</div>
         )}
       </div>
       <div style={{ fontSize: 11, color: '#666' }}>
@@ -718,7 +691,6 @@ export default function Home() {
     </div>
   );
 
-  // 로그인 모달
   const AuthModal = () => (
     <div
       style={{
@@ -746,7 +718,6 @@ export default function Home() {
         <p style={{ fontSize: 12, color: '#aaa', marginBottom: 24 }}>
           CLP 기록을 저장하고 불러올 수 있어요
         </p>
-
         <div style={{ marginBottom: 12 }}>
           <label
             style={{
@@ -811,7 +782,6 @@ export default function Home() {
             }}
           />
         </div>
-
         {authError && (
           <div
             style={{
@@ -826,7 +796,6 @@ export default function Home() {
             {authError}
           </div>
         )}
-
         <button
           onClick={authMode === 'login' ? handleLogin : handleSignup}
           disabled={authLoading}
@@ -849,7 +818,6 @@ export default function Home() {
             ? '로그인'
             : '회원가입'}
         </button>
-
         <div
           style={{
             display: 'flex',
@@ -895,7 +863,6 @@ export default function Home() {
     </div>
   );
 
-  // 기록 모달
   const RecordsModal = () => (
     <div
       style={{
@@ -941,7 +908,6 @@ export default function Home() {
             ✕
           </button>
         </div>
-
         {records.length === 0 ? (
           <div style={{ textAlign: 'center', padding: 40, color: '#aaa' }}>
             저장된 기록이 없어요
@@ -1040,7 +1006,6 @@ export default function Home() {
           padding: 24,
         }}
       >
-        {/* 상단 바 */}
         <div
           style={{
             display: 'flex',
@@ -1113,7 +1078,6 @@ export default function Home() {
           </div>
         </div>
 
-        {/* 저장 섹션 */}
         {user && (
           <div
             style={{
@@ -1166,7 +1130,6 @@ export default function Home() {
           </div>
         )}
 
-        {/* 요약 카드 */}
         <div
           style={{
             display: 'grid',
@@ -1226,7 +1189,6 @@ export default function Home() {
           ))}
         </div>
 
-        {/* 컨테이너별 배치도 */}
         {containerLoads.map((load, ci) => {
           const ct = load.containerType;
           const loadedCbm = load.boxes.reduce(
@@ -1351,7 +1313,6 @@ export default function Home() {
               </div>
 
               <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
-                {/* 상면도 */}
                 <div>
                   <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>
                     📐 상면도 (위에서)
@@ -1495,6 +1456,23 @@ export default function Home() {
                                 NO
                               </div>
                             )}
+                            {box.noTopLoad && (
+                              <div
+                                style={{
+                                  position: 'absolute',
+                                  top: 1,
+                                  left: 1,
+                                  background: '#fff7e6',
+                                  color: '#d97706',
+                                  fontSize: 5,
+                                  padding: '0 2px',
+                                  borderRadius: 1,
+                                  fontWeight: 800,
+                                }}
+                              >
+                                NT
+                              </div>
+                            )}
                           </div>
                         );
                       })}
@@ -1513,7 +1491,6 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* 측면도 */}
                 <div>
                   <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>
                     📐 측면도 (옆에서)
@@ -1606,14 +1583,13 @@ export default function Home() {
                 </div>
               </div>
               <div style={{ fontSize: 10, color: '#aaa' }}>
-                💡 박스에 마우스를 올리면 상세 정보 · 상면도: 위에서 본 뷰 ·
-                측면도: 옆에서 본 뷰
+                💡 박스에 마우스를 올리면 상세 정보 · NO: 완전다단불가 · NT:
+                상단가능
               </div>
             </div>
           );
         })}
 
-        {/* 범례 */}
         <div
           style={{
             background: 'white',
@@ -1659,7 +1635,6 @@ export default function Home() {
           </div>
         </div>
 
-        {/* 품목별 요약 */}
         <div
           style={{
             background: 'white',
@@ -1696,7 +1671,7 @@ export default function Home() {
                     '단위CBM',
                     '총CBM',
                     '중량(kg)',
-                    '다단적재',
+                    '적재옵션',
                   ].map((h) => (
                     <th
                       key={h}
@@ -1748,18 +1723,46 @@ export default function Home() {
                     </td>
                     <td style={{ padding: '10px' }}>{c.weight}kg</td>
                     <td style={{ padding: '10px' }}>
-                      <span
-                        style={{
-                          padding: '3px 10px',
-                          borderRadius: 20,
-                          fontSize: 11,
-                          fontWeight: 700,
-                          background: c.noStack ? '#fff0f0' : '#f0fff4',
-                          color: c.noStack ? '#e04040' : '#38a169',
-                        }}
-                      >
-                        {c.noStack ? '❌ 불가' : '✅ 가능'}
-                      </span>
+                      {c.noStack ? (
+                        <span
+                          style={{
+                            padding: '3px 10px',
+                            borderRadius: 20,
+                            fontSize: 11,
+                            fontWeight: 700,
+                            background: '#fff0f0',
+                            color: '#e04040',
+                          }}
+                        >
+                          ❌ 완전 다단불가
+                        </span>
+                      ) : c.noTopLoad ? (
+                        <span
+                          style={{
+                            padding: '3px 10px',
+                            borderRadius: 20,
+                            fontSize: 11,
+                            fontWeight: 700,
+                            background: '#fff7e6',
+                            color: '#d97706',
+                          }}
+                        >
+                          ⚠️ 상단가능
+                        </span>
+                      ) : (
+                        <span
+                          style={{
+                            padding: '3px 10px',
+                            borderRadius: 20,
+                            fontSize: 11,
+                            fontWeight: 700,
+                            background: '#f0fff4',
+                            color: '#38a169',
+                          }}
+                        >
+                          ✅ 가능
+                        </span>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -1835,7 +1838,6 @@ export default function Home() {
         position: 'relative',
       }}
     >
-      {/* 상단 바 */}
       <div
         style={{
           display: 'flex',
@@ -1930,7 +1932,7 @@ export default function Home() {
           컨테이너 자동 선택 기준
         </h2>
         <p style={{ fontSize: 12, color: '#aaa', marginBottom: 12 }}>
-          40HQ → 40GP → 20GP 순으로 가장 효율적인 조합을 자동 계산합니다.
+          20GP 1개에 들어가면 20GP, 나머지는 40HQ를 사용합니다.
         </p>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           {CONTAINER_TYPES.map((ct) => (
@@ -2030,6 +2032,7 @@ export default function Home() {
                   '수량',
                   'CBM',
                   '다단불가',
+                  '상단가능',
                   '',
                 ].map((h) => (
                   <th
@@ -2087,13 +2090,28 @@ export default function Home() {
                   >
                     {calcCbm(c).toFixed(3)}
                   </td>
+                  {/* 다단불가 체크박스 */}
                   <td style={{ padding: '8px 10px', textAlign: 'center' }}>
                     <input
                       type="checkbox"
                       checked={c.noStack}
-                      onChange={(e) =>
-                        updateCargo(c.id, 'noStack', e.target.checked)
-                      }
+                      onChange={(e) => {
+                        updateCargo(c.id, 'noStack', e.target.checked);
+                        if (e.target.checked)
+                          updateCargo(c.id, 'noTopLoad', false);
+                      }}
+                    />
+                  </td>
+                  {/* 상단가능 체크박스 */}
+                  <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                    <input
+                      type="checkbox"
+                      checked={c.noTopLoad}
+                      onChange={(e) => {
+                        updateCargo(c.id, 'noTopLoad', e.target.checked);
+                        if (e.target.checked)
+                          updateCargo(c.id, 'noStack', false);
+                      }}
                     />
                   </td>
                   <td style={{ padding: '8px 10px' }}>
@@ -2116,7 +2134,8 @@ export default function Home() {
           </table>
         </div>
         <div style={{ fontSize: 11, color: '#aaa', marginTop: 8 }}>
-          💡 허용 하중은 1단 박스의 자체 중량으로 자동 계산됩니다.
+          💡 다단불가: 바닥에만 배치, 위에도 못 올림 &nbsp;|&nbsp; 상단가능:
+          쌓일 수 있지만 위에는 못 올림
         </div>
         <button
           onClick={addCargo}
@@ -2159,19 +2178,23 @@ export default function Home() {
 
       <button
         onClick={calculate}
+        disabled={calculating}
         style={{
           width: '100%',
           padding: 14,
           borderRadius: 8,
           border: 'none',
-          background: '#4f8ef7',
+          background: calculating ? '#93c5fd' : '#4f8ef7',
           color: 'white',
           fontWeight: 700,
           fontSize: 15,
-          cursor: 'pointer',
+          cursor: calculating ? 'not-allowed' : 'pointer',
+          transition: 'all 0.2s',
         }}
       >
-        🔍 최적 적재 계산하기
+        {calculating
+          ? '⏳ 화물 이리저리 넣어보는 중 ⏳'
+          : '🔍 최적 적재 계산하기'}
       </button>
 
       {showAuth && <AuthModal />}

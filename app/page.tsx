@@ -32,6 +32,8 @@ type CargoItem = {
   quantity: number;
   noStack: boolean;
   noTopLoad: boolean;
+  groupId?: number;
+  highlighted?: boolean;
 };
 
 type PlacedBox3D = {
@@ -47,6 +49,7 @@ type PlacedBox3D = {
   weight: number;
   noStack: boolean;
   noTopLoad: boolean;
+  groupId?: number;
 };
 
 type ContainerLoad3D = {
@@ -88,7 +91,6 @@ const theme = {
   bg: '#f5f5f4',
   card: '#ffffff',
   primary: '#44403c',
-  primaryDark: '#292524',
   primaryLight: '#f5f5f4',
   success: '#4d7c60',
   warning: '#92724a',
@@ -101,7 +103,19 @@ const theme = {
   shadowLg: '0 4px 6px rgba(0,0,0,0.04), 0 20px 40px rgba(0,0,0,0.07)',
 };
 
-// ── 알고리즘 함수들 ────────────────────────────────────
+const EMPTY_CARGO = (): CargoItem => ({
+  id: Date.now() + Math.random(),
+  name: '',
+  length: 0,
+  width: 0,
+  height: 0,
+  weight: 0,
+  quantity: 1,
+  noStack: false,
+  noTopLoad: false,
+});
+
+// ── 알고리즘 ────────────────────────────────────────────
 
 function getHorizontalRotations(
   l: number,
@@ -161,8 +175,8 @@ function canPlace(
   noTopLoad: boolean,
   weight: number
 ): boolean {
-  if (x + l > cL || y + w > cW || z + h > cH) return false;
-  if (x < 0 || y < 0 || z < 0) return false;
+  if (x + l > cL || y + w > cW || z + h > cH || x < 0 || y < 0 || z < 0)
+    return false;
   for (const b of boxes) {
     if (
       b.x < x + l &&
@@ -186,8 +200,11 @@ function canPlace(
       return false;
   }
   for (const b of boxes) {
-    if (!overlapsXY(x, y, l, w, b.x, b.y, b.l, b.w)) continue;
-    if (Math.abs(b.z + b.h - z) > 0.1) continue;
+    if (
+      !overlapsXY(x, y, l, w, b.x, b.y, b.l, b.w) ||
+      Math.abs(b.z + b.h - z) > 0.1
+    )
+      continue;
     const alreadyOn = boxes
       .filter(
         (ob) =>
@@ -261,14 +278,19 @@ function pack3D(
 ): { boxes: PlacedBox3D[]; remaining: CargoItem[] } {
   const placed: PlacedBox3D[] = [],
     remaining: CargoItem[] = [];
-  for (const cargo of cargoList) {
+  // 그룹끼리 연속 배치
+  const sorted = [...cargoList].sort((a, b) => {
+    if (a.groupId && b.groupId) {
+      if (a.groupId === b.groupId) return 0;
+      return a.groupId - b.groupId;
+    }
+    if (a.groupId) return -1;
+    if (b.groupId) return 1;
+    return 0;
+  });
+  for (const cargo of sorted) {
     const colorIdx = cargos.findIndex((c) => c.id === cargo.id);
     const color = COLORS[colorIdx % COLORS.length];
-    const rotations = getHorizontalRotations(
-      cargo.length,
-      cargo.width,
-      cargo.height
-    );
     const eps = getExtremePoints(placed, ct.length, ct.width, ct.height);
     let best: {
       x: number;
@@ -280,7 +302,11 @@ function pack3D(
       score: number;
     } | null = null;
     for (const ep of eps) {
-      for (const [rl, rw, rh] of rotations) {
+      for (const [rl, rw, rh] of getHorizontalRotations(
+        cargo.length,
+        cargo.width,
+        cargo.height
+      )) {
         if (
           !canPlace(
             placed,
@@ -299,7 +325,18 @@ function pack3D(
           )
         )
           continue;
-        const score = ep.z * 10000 + ep.x * 100 + ep.y;
+        let score = ep.z * 10000 + ep.x * 100 + ep.y;
+        if (cargo.groupId) {
+          const gBoxes = placed.filter((b) => b.groupId === cargo.groupId);
+          if (gBoxes.length > 0) {
+            const avgX = gBoxes.reduce((s, b) => s + b.x, 0) / gBoxes.length;
+            const avgY = gBoxes.reduce((s, b) => s + b.y, 0) / gBoxes.length;
+            const dist = Math.sqrt(
+              Math.pow(ep.x - avgX, 2) + Math.pow(ep.y - avgY, 2)
+            );
+            score -= Math.max(0, 500 - dist);
+          }
+        }
         if (!best || score < best.score)
           best = { x: ep.x, y: ep.y, z: ep.z, l: rl, w: rw, h: rh, score };
       }
@@ -318,6 +355,7 @@ function pack3D(
         weight: cargo.weight,
         noStack: cargo.noStack,
         noTopLoad: cargo.noTopLoad,
+        groupId: cargo.groupId,
       });
     } else {
       remaining.push(cargo);
@@ -326,36 +364,38 @@ function pack3D(
   return { boxes: placed, remaining };
 }
 
+const STRATEGIES = [
+  (b: CargoItem[]) =>
+    [...b].sort((a, z) => {
+      if (a.noStack !== z.noStack) return a.noStack ? -1 : 1;
+      return z.length * z.width - a.length * a.width;
+    }),
+  (b: CargoItem[]) =>
+    [...b].sort((a, z) => {
+      if (a.noStack !== z.noStack) return a.noStack ? -1 : 1;
+      return z.length * z.width * z.height - a.length * a.width * a.height;
+    }),
+  (b: CargoItem[]) =>
+    [...b].sort((a, z) => {
+      if (a.noStack !== z.noStack) return a.noStack ? -1 : 1;
+      return z.height - a.height;
+    }),
+  (b: CargoItem[]) =>
+    [...b].sort((a, z) => {
+      if (a.noStack !== z.noStack) return a.noStack ? -1 : 1;
+      return a.length * a.width * a.height - z.length * z.width * z.height;
+    }),
+  (b: CargoItem[]) =>
+    [...b].sort((a, z) => {
+      if (a.noStack !== z.noStack) return a.noStack ? -1 : 1;
+      return Math.max(z.length, z.width) - Math.max(a.length, a.width);
+    }),
+];
+
 function buildContainerLoads(cargos: CargoItem[]): ContainerLoad3D[] {
   const ct20GP = CONTAINER_TYPES.find((ct) => ct.name === '20GP')!;
   const ct40HQ = CONTAINER_TYPES.find((ct) => ct.name === '40HQ')!;
-  const strategies = [
-    (b: CargoItem[]) =>
-      [...b].sort((a, z) => {
-        if (a.noStack !== z.noStack) return a.noStack ? -1 : 1;
-        return z.length * z.width - a.length * a.width;
-      }),
-    (b: CargoItem[]) =>
-      [...b].sort((a, z) => {
-        if (a.noStack !== z.noStack) return a.noStack ? -1 : 1;
-        return z.length * z.width * z.height - a.length * a.width * a.height;
-      }),
-    (b: CargoItem[]) =>
-      [...b].sort((a, z) => {
-        if (a.noStack !== z.noStack) return a.noStack ? -1 : 1;
-        return z.height - a.height;
-      }),
-    (b: CargoItem[]) =>
-      [...b].sort((a, z) => {
-        if (a.noStack !== z.noStack) return a.noStack ? -1 : 1;
-        return a.length * a.width * a.height - z.length * z.width * z.height;
-      }),
-    (b: CargoItem[]) =>
-      [...b].sort((a, z) => {
-        if (a.noStack !== z.noStack) return a.noStack ? -1 : 1;
-        return Math.max(z.length, z.width) - Math.max(a.length, a.width);
-      }),
-  ];
+
   const runPacking = (
     strategy: (b: CargoItem[]) => CargoItem[]
   ): ContainerLoad3D[] => {
@@ -381,23 +421,23 @@ function buildContainerLoads(cargos: CargoItem[]): ContainerLoad3D[] {
         selectedCt
       );
       if (fitsIn20GP && leftover.length > 0) {
-        const { boxes: boxes40, remaining: leftover40 } = pack3D(
+        const { boxes: b40, remaining: l40 } = pack3D(
           strategy(remaining),
           cargos,
           ct40HQ
         );
-        if (boxes40.length > 0 && leftover40.length < leftover.length) {
-          const cog = calcCOG(boxes40, ct40HQ.length, ct40HQ.width);
+        if (b40.length > 0 && l40.length < leftover.length) {
+          const cog = calcCOG(b40, ct40HQ.length, ct40HQ.width);
           loads.push({
             containerId: containerId++,
             containerType: ct40HQ,
-            boxes: boxes40,
+            boxes: b40,
             cogX: cog.x,
             cogY: cog.y,
             xImbalance: Math.abs(cog.x - 0.5) > 0.1,
             yImbalance: Math.abs(cog.y - 0.5) > 0.1,
           });
-          remaining = leftover40;
+          remaining = l40;
           continue;
         }
       }
@@ -419,8 +459,9 @@ function buildContainerLoads(cargos: CargoItem[]): ContainerLoad3D[] {
     }
     return loads;
   };
+
   let best: ContainerLoad3D[] | null = null;
-  for (const s of strategies) {
+  for (const s of STRATEGIES) {
     const r = runPacking(s);
     if (!best || r.length < best.length) best = r;
     if (best.length === 1) break;
@@ -428,18 +469,21 @@ function buildContainerLoads(cargos: CargoItem[]): ContainerLoad3D[] {
   return best!.map((load, i) => ({ ...load, containerId: i }));
 }
 
-// ── 공통 컴포넌트 ──────────────────────────────────────
+// ── 공통 컴포넌트 ───────────────────────────────────────
 
-// ✅ 네비게이션 — 중복 제거를 위해 하나로 통합
-type NavProps = {
+function Nav({
+  user,
+  onLogin,
+  onLogout,
+  onRecords,
+  onBack,
+}: {
   user: User | null;
   onLogin: () => void;
   onLogout: () => void;
   onRecords: () => void;
-  onBack?: () => void; // 결과 페이지에서만 사용
-};
-
-function Nav({ user, onLogin, onLogout, onRecords, onBack }: NavProps) {
+  onBack?: () => void;
+}) {
   return (
     <nav
       style={{
@@ -489,33 +533,16 @@ function Nav({ user, onLogin, onLogout, onRecords, onBack }: NavProps) {
             >
               👤 {user.email?.replace('@clp.app', '')}
             </span>
-            <button
-              onClick={onRecords}
-              style={{
-                padding: '8px 16px',
-                borderRadius: 10,
-                border: `1.5px solid ${theme.primary}`,
-                background: theme.primaryLight,
-                color: theme.primary,
-                fontSize: 13,
-                fontWeight: 700,
-                cursor: 'pointer',
-                fontFamily: 'inherit',
-              }}
-            >
+            <button onClick={onRecords} style={navBtnStyle}>
               📋 내 기록
             </button>
             <button
               onClick={onLogout}
               style={{
-                padding: '8px 14px',
-                borderRadius: 10,
+                ...navBtnStyle,
                 border: `1px solid ${theme.border}`,
                 background: 'white',
                 color: theme.textSecondary,
-                fontSize: 13,
-                cursor: 'pointer',
-                fontFamily: 'inherit',
               }}
             >
               로그아웃
@@ -543,14 +570,10 @@ function Nav({ user, onLogin, onLogout, onRecords, onBack }: NavProps) {
           <button
             onClick={onBack}
             style={{
-              padding: '8px 16px',
-              borderRadius: 10,
+              ...navBtnStyle,
               border: `1px solid ${theme.border}`,
               background: 'white',
               color: theme.textSecondary,
-              fontSize: 13,
-              cursor: 'pointer',
-              fontFamily: 'inherit',
             }}
           >
             ← 다시 입력
@@ -575,7 +598,6 @@ function Nav({ user, onLogin, onLogout, onRecords, onBack }: NavProps) {
   );
 }
 
-// ✅ 푸터 — 중복 제거를 위해 하나로 통합
 function Footer() {
   return (
     <div
@@ -615,7 +637,6 @@ function Footer() {
   );
 }
 
-// ── AuthModal ──────────────────────────────────────────
 type AuthModalProps = {
   authMode: 'login' | 'signup';
   email: string;
@@ -855,7 +876,6 @@ function AuthModal({
   );
 }
 
-// ── RecordsModal ───────────────────────────────────────
 type RecordsModalProps = {
   records: ClpRecord[];
   setShowRecords: (v: boolean) => void;
@@ -1157,7 +1177,8 @@ function RecordsModal({
   );
 }
 
-// ── Home ───────────────────────────────────────────────
+// ── Home ────────────────────────────────────────────────
+
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
@@ -1172,18 +1193,9 @@ export default function Home() {
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [quickInput, setQuickInput] = useState('');
+  const [quickAddLoading, setQuickAddLoading] = useState(false);
   const [cargos, setCargos] = useState<CargoItem[]>([
-    {
-      id: 1,
-      name: '',
-      length: 0,
-      width: 0,
-      height: 0,
-      weight: 0,
-      quantity: 1,
-      noStack: false,
-      noTopLoad: false,
-    },
+    { ...EMPTY_CARGO(), id: 1 },
   ]);
   const [page, setPage] = useState<'input' | 'result'>('input');
   const [containerLoads, setContainerLoads] = useState<ContainerLoad3D[]>([]);
@@ -1191,7 +1203,6 @@ export default function Home() {
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
   const [calculating, setCalculating] = useState(false);
   const [editingRecord, setEditingRecord] = useState<ClpRecord | null>(null);
-  const [quickAddLoading, setQuickAddLoading] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -1205,17 +1216,15 @@ export default function Home() {
         setUser({ id: session.user.id, email: session.user.email! });
       else setUser(null);
     });
-
-    // ✅ 브라우저 뒤로가기 감지
     const handlePopState = () => setPage('input');
     window.addEventListener('popstate', handlePopState);
-
     return () => {
       subscription.unsubscribe();
       window.removeEventListener('popstate', handlePopState);
     };
   }, []);
 
+  // ── Auth ──
   const toEmail = (id: string) => `${id.trim()}@clp.app`;
 
   const handleLogin = async () => {
@@ -1255,6 +1264,7 @@ export default function Home() {
     setUser(null);
   };
 
+  // ── Records ──
   const handleSave = async () => {
     if (!user) {
       setShowAuth(true);
@@ -1359,87 +1369,67 @@ export default function Home() {
     await loadRecords();
   };
 
+  // ── Cargo ──
   const handleReset = () => {
-    setCargos([
-      {
-        id: 1,
-        name: '',
-        length: 0,
-        width: 0,
-        height: 0,
-        weight: 0,
-        quantity: 1,
-        noStack: false,
-        noTopLoad: false,
-      },
-    ]);
+    setCargos([{ ...EMPTY_CARGO(), id: 1 }]);
     setContainerLoads([]);
     setPage('input');
     setQuickInput('');
     setHoveredBox(null);
   };
 
-  const parseQuickInput = (text: string) => {
-    // ✅ 쉼표, 줄바꿈, 슬래시(/) 모두 구분자로 처리
-    // 단, 슬래시 뒤에 숫자+KG 패턴은 중량으로 인식하므로 먼저 분리
-    return text
-      .split(/[,\n\/]/)
-      .map((item) => {
-        let s = item.trim();
-        if (!s) return null;
+  const addCargo = () => setCargos((prev) => [...prev, EMPTY_CARGO()]);
+  const removeCargo = (id: number) =>
+    setCargos((prev) => prev.filter((c) => c.id !== id));
+  const updateCargo = (id: number, field: keyof CargoItem, value: any) =>
+    setCargos((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, [field]: value } : c))
+    );
+  const calcCbm = (c: CargoItem) =>
+    (c.length / 100) * (c.width / 100) * (c.height / 100) * c.quantity;
+  const totalCbm = cargos.reduce((s, c) => s + calcCbm(c), 0);
+  const totalWeight = cargos.reduce((s, c) => s + c.weight * c.quantity, 0);
 
-        // ✅ MM 단위 감지 (LWH-MM 또는 숫자가 3자리 이상 큰 경우)
-        const isMM = /mm/i.test(s);
-
-        // ✅ KG 앞 숫자까지 제거 (213KG → 통째로 제거)
-        s = s.replace(/\d+(\.\d+)?\s*kg/gi, '');
-
-        // 불필요한 텍스트 제거
-        s = s
-          .toLowerCase()
-          .replace(/다단불가|상단적재|노스택|no\s*stack|lwh|mm|ea|kg/gi, ' ')
-          .replace(/상단에\s*가벼운\s*짐\s*ok|상단\s*ok|top\s*ok/gi, ' ')
-          .replace(/[*×xX\/]/g, ' ')
-          .replace(/\((\d+)\)/g, ' $1')
-          .replace(/\s+/g, ' ')
-          .trim();
-
-        const nums = s.match(/\d+(\.\d+)?/g);
-        if (!nums || nums.length < 3) return null;
-
-        let l = +nums[0],
-          w = +nums[1],
-          h = +nums[2];
-        const qty = nums[3] && +nums[3] < 1000 ? +nums[3] : 1;
-
-        // ✅ MM → CM 변환 (명시적 MM 표기 또는 하나라도 1000 이상이면 자동 감지)
-        if (isMM || l >= 1000 || w >= 1000 || h >= 1000) {
-          l = Math.round(l / 10);
-          w = Math.round(w / 10);
-          h = Math.round(h / 10);
-        }
-        // ✅ M → CM 변환 (소수점 있고 10 미만이면 미터로 간주)
-        else if (l < 10 && w < 10 && h < 10) {
-          l = Math.round(l * 100);
-          w = Math.round(w * 100);
-          h = Math.round(h * 100);
-        }
-
-        return { length: l, width: w, height: h, quantity: qty };
-      })
-      .filter(Boolean) as {
-      length: number;
-      width: number;
-      height: number;
-      quantity: number;
-    }[];
-  };
-
+  // ── 빠른 추가 (AI 파싱) ──
   const handleQuickAdd = async () => {
-    if (!quickInput.trim()) {
-      return;
-    }
+    if (!quickInput.trim()) return;
     setQuickAddLoading(true);
+    const groupId = Date.now();
+
+    const applyItems = (
+      parsed: {
+        length: number;
+        width: number;
+        height: number;
+        quantity: number;
+      }[]
+    ) => {
+      if (!parsed.length) {
+        alert('화물 정보를 찾을 수 없어요');
+        return;
+      }
+      const newItems: CargoItem[] = parsed.map((p) => ({
+        ...EMPTY_CARGO(),
+        length: p.length || 0,
+        width: p.width || 0,
+        height: p.height || 0,
+        quantity: p.quantity || 1,
+        groupId,
+        highlighted: true,
+      }));
+      // ✅ 기존 하이라이트 제거 + 새 항목 추가
+      setCargos((prev) => [
+        ...prev.map((c) => ({ ...c, highlighted: false })),
+        ...newItems,
+      ]);
+      setQuickInput('');
+      // ✅ 3초 후 하이라이트 제거
+      setTimeout(
+        () =>
+          setCargos((prev) => prev.map((c) => ({ ...c, highlighted: false }))),
+        3000
+      );
+    };
 
     try {
       const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -1453,158 +1443,102 @@ export default function Home() {
               role: 'user',
               content: `다음 텍스트에서 화물 치수 정보를 추출해서 JSON 배열만 반환해. 다른 텍스트 절대 쓰지 마.
 
-              단위 변환 규칙:
-              - 숫자가 모두 1000 이상이면 MM → ÷10 해서 CM으로
-              - 숫자 중 하나라도 소수점이 있으면 M → ×100 해서 CM으로
-              - 숫자가 100~999 사이면 MM일 가능성 높음 → 실제 물류 박스 크기 기준으로 판단
-                (예: 805*920*970 → 실제 박스가 8m×9m×9m일 수 없으므로 MM → 80.5*92*97 CM)
-                (예: 120*80*100 → 일반적인 박스 크기이므로 CM 그대로)
-              - 박스 크기가 비현실적으로 크면 (한 변이 300cm 이상) MM으로 재판단
-              - KG, 중량, 적재 관련 텍스트 무시
-              - 수량 없으면 1
-              - 키: length, width, height, quantity
-              
-              입력: ${quickInput}
-              
-              출력 예시: [{"length":80.5,"width":92,"height":97,"quantity":2}]`,
+단위 변환 규칙:
+- 숫자가 모두 1000 이상이면 MM → ÷10 해서 CM으로
+- 숫자 중 하나라도 소수점이 있으면 M → ×100 해서 CM으로
+- 숫자가 100~999 사이면 MM일 가능성 높음 → 실제 물류 박스 크기 기준으로 판단
+  (예: 805*920*970 → 실제 박스가 8m×9m×9m일 수 없으므로 MM → 80.5*92*97 CM)
+  (예: 120*80*100 → 일반적인 박스 크기이므로 CM 그대로)
+- 박스 크기가 비현실적으로 크면 (한 변이 300cm 이상) MM으로 재판단
+- KG, 중량, 적재 관련 텍스트 무시
+- 수량 없으면 1
+- 키: length, width, height, quantity
+
+입력: ${quickInput}
+
+출력 예시: [{"length":80.5,"width":92,"height":97,"quantity":2}]`,
             },
           ],
         }),
       });
-
       const data = await response.json();
       const text = data.content?.[0]?.text || '[]';
-      const clean = text.replace(/```json|```/g, '').trim();
-      const parsed = JSON.parse(clean);
-
-      if (!parsed.length) {
-        alert('화물 정보를 찾을 수 없어요');
-        return;
-      }
-      setCargos((prev) => [
-        ...prev,
-        ...parsed.map((p: any) => ({
-          id: Date.now() + Math.random(),
-          name: '',
-          length: p.length || 0,
-          width: p.width || 0,
-          height: p.height || 0,
-          weight: 0,
-          quantity: p.quantity || 1,
-          noStack: false,
-          noTopLoad: false,
-        })),
-      ]);
-      setQuickInput('');
-    } catch (e) {
-      // API 실패 시 기존 방식으로 폴백
-      const parsed = parseQuickInput(quickInput);
-      if (!parsed.length) {
-        alert('형식이 잘못됐어요');
-        return;
-      }
-      setCargos((prev) => [
-        ...prev,
-        ...parsed.map((p) => ({
-          id: Date.now() + Math.random(),
-          name: '',
-          ...p,
-          weight: 0,
-          noStack: false,
-          noTopLoad: false,
-        })),
-      ]);
-      setQuickInput('');
+      applyItems(JSON.parse(text.replace(/```json|```/g, '').trim()));
+    } catch {
+      // 폴백: 규칙 기반 파싱
+      applyItems(parseQuickInput(quickInput));
     } finally {
       setQuickAddLoading(false);
     }
   };
 
-  const addCargo = () =>
-    setCargos([
-      ...cargos,
-      {
-        id: Date.now(),
-        name: '',
-        length: 0,
-        width: 0,
-        height: 0,
-        weight: 0,
-        quantity: 1,
-        noStack: false,
-        noTopLoad: false,
-      },
-    ]);
-  const removeCargo = (id: number) =>
-    setCargos(cargos.filter((c) => c.id !== id));
-  const updateCargo = (id: number, field: keyof CargoItem, value: any) =>
-    setCargos(cargos.map((c) => (c.id === id ? { ...c, [field]: value } : c)));
-  const calcCbm = (c: CargoItem) =>
-    (c.length / 100) * (c.width / 100) * (c.height / 100) * c.quantity;
-  const totalCbm = cargos.reduce((s, c) => s + calcCbm(c), 0);
-  const totalWeight = cargos.reduce((s, c) => s + c.weight * c.quantity, 0);
+  const parseQuickInput = (text: string) => {
+    return text
+      .split(/[,\n\/]/)
+      .map((item) => {
+        let s = item.trim();
+        if (!s) return null;
+        const isMM = /mm/i.test(s);
+        s = s
+          .replace(/\d+(\.\d+)?\s*kg/gi, '')
+          .toLowerCase()
+          .replace(/다단불가|상단적재|노스택|no\s*stack|lwh|mm|ea|kg/gi, ' ')
+          .replace(/상단에\s*가벼운\s*짐\s*ok|상단\s*ok|top\s*ok/gi, ' ')
+          .replace(/[*×xX\/]/g, ' ')
+          .replace(/\((\d+)\)/g, ' $1')
+          .replace(/\s+/g, ' ')
+          .trim();
+        const nums = s.match(/\d+(\.\d+)?/g);
+        if (!nums || nums.length < 3) return null;
+        let l = +nums[0],
+          w = +nums[1],
+          h = +nums[2];
+        const qty = nums[3] && +nums[3] < 1000 ? +nums[3] : 1;
+        if (isMM || l >= 1000 || w >= 1000 || h >= 1000) {
+          l = Math.round(l / 10);
+          w = Math.round(w / 10);
+          h = Math.round(h / 10);
+        } else if (l < 10 && w < 10 && h < 10) {
+          l = Math.round(l * 100);
+          w = Math.round(w * 100);
+          h = Math.round(h * 100);
+        }
+        return { length: l, width: w, height: h, quantity: qty };
+      })
+      .filter(Boolean) as {
+      length: number;
+      width: number;
+      height: number;
+      quantity: number;
+    }[];
+  };
 
+  // ── 계산 ──
   const calculate = async () => {
     setCalculating(true);
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await new Promise((r) => setTimeout(r, 50));
     setContainerLoads(buildContainerLoads(cargos));
     setCalculating(false);
     setPage('result');
-    // ✅ 브라우저 히스토리에 추가 → 뒤로가기 가능
     window.history.pushState({ page: 'result' }, '', '');
   };
+
   const calculateDraft = async () => {
     setCalculating(true);
-    await new Promise((resolve) => setTimeout(resolve, 50));
-
+    await new Promise((r) => setTimeout(r, 50));
     const ct20GP = CONTAINER_TYPES.find((ct) => ct.name === '20GP')!;
-
-    // 20GP 1개에 최대한 채우기
     const allItems = [...cargos].flatMap((c) =>
       Array.from({ length: c.quantity }, () => ({ ...c, quantity: 1 }))
     );
-
-    const strategies = [
-      (b: CargoItem[]) =>
-        [...b].sort((a, z) => {
-          if (a.noStack !== z.noStack) return a.noStack ? -1 : 1;
-          return z.length * z.width - a.length * a.width;
-        }),
-      (b: CargoItem[]) =>
-        [...b].sort((a, z) => {
-          if (a.noStack !== z.noStack) return a.noStack ? -1 : 1;
-          return z.length * z.width * z.height - a.length * a.width * a.height;
-        }),
-      (b: CargoItem[]) =>
-        [...b].sort((a, z) => {
-          if (a.noStack !== z.noStack) return a.noStack ? -1 : 1;
-          return z.height - a.height;
-        }),
-      (b: CargoItem[]) =>
-        [...b].sort((a, z) => {
-          if (a.noStack !== z.noStack) return a.noStack ? -1 : 1;
-          return a.length * a.width * a.height - z.length * z.width * z.height;
-        }),
-      (b: CargoItem[]) =>
-        [...b].sort((a, z) => {
-          if (a.noStack !== z.noStack) return a.noStack ? -1 : 1;
-          return Math.max(z.length, z.width) - Math.max(a.length, a.width);
-        }),
-    ];
-
-    // 5가지 전략 중 가장 많이 들어가는 것 선택
-    let bestBoxes: PlacedBox3D[] = [];
-    let bestRemaining: CargoItem[] = [];
-
-    for (const strategy of strategies) {
+    let bestBoxes: PlacedBox3D[] = [],
+      bestRemaining: CargoItem[] = [];
+    for (const strategy of STRATEGIES) {
       const { boxes, remaining } = pack3D(strategy(allItems), cargos, ct20GP);
       if (boxes.length > bestBoxes.length) {
         bestBoxes = boxes;
         bestRemaining = remaining;
       }
     }
-
-    // ✅ 결과를 containerLoads에 저장 (20GP 1개만)
     const cog = calcCOG(bestBoxes, ct20GP.length, ct20GP.width);
     setContainerLoads([
       {
@@ -1617,30 +1551,25 @@ export default function Home() {
         yImbalance: Math.abs(cog.y - 0.5) > 0.1,
       },
     ]);
-
-    // ✅ 못 들어간 화물은 입력창에 다시 그룹화해서 남겨둠
-    // 같은 id끼리 수량 합산
     const remainingGrouped = bestRemaining.reduce((acc, item) => {
-      const existing = acc.find((a) => a.id === item.id);
-      if (existing) existing.quantity += 1;
+      const ex = acc.find((a) => a.id === item.id);
+      if (ex) ex.quantity += 1;
       else acc.push({ ...item, quantity: 1 });
       return acc;
     }, [] as CargoItem[]);
-
-    // 들어간 화물은 수량 줄이기
     setCargos((prev) =>
       prev
-        .map((c) => {
-          const remainCount =
-            remainingGrouped.find((r) => r.id === c.id)?.quantity || 0;
-          return { ...c, quantity: remainCount };
-        })
+        .map((c) => ({
+          ...c,
+          quantity: remainingGrouped.find((r) => r.id === c.id)?.quantity || 0,
+        }))
         .filter((c) => c.quantity > 0)
     );
-
     setCalculating(false);
     setPage('result');
   };
+
+  // ── UI 컴포넌트 ──
   const BoxTooltip = ({ box }: { box: PlacedBox3D }) => (
     <div
       style={{
@@ -1696,7 +1625,7 @@ export default function Home() {
       </div>
       <div style={{ fontSize: 11, color: theme.textSecondary }}>
         <div>
-          X: {box.x}cm &nbsp; Y: {box.y}cm &nbsp; Z: {box.z}cm
+          X:{box.x}cm Y:{box.y}cm Z:{box.z}cm
         </div>
         {box.noStack && (
           <div style={{ color: theme.danger, marginTop: 4, fontWeight: 600 }}>
@@ -1712,73 +1641,44 @@ export default function Home() {
     </div>
   );
 
-  const modalProps = {
-    showAuth,
-    showRecords,
-    authMode,
-    email,
-    password,
-    authError,
-    authLoading,
-    setEmail,
-    setPassword,
-    setAuthMode,
-    setAuthError,
-    setShowAuth,
-    handleLogin,
-    handleSignup,
-    records,
-    setShowRecords,
-    loadRecord,
-    deleteRecord,
-    duplicateRecord,
-    editingRecord,
-    setEditingRecord,
-    saveTitle,
-    setSaveTitle,
-    updateRecord,
-    saving,
-    saveSuccess,
-  };
-
   const Modals = () => (
     <>
       {showAuth && (
         <AuthModal
-          authMode={modalProps.authMode}
-          email={modalProps.email}
-          password={modalProps.password}
-          authError={modalProps.authError}
-          authLoading={modalProps.authLoading}
-          setEmail={modalProps.setEmail}
-          setPassword={modalProps.setPassword}
-          setAuthMode={modalProps.setAuthMode}
-          setAuthError={modalProps.setAuthError}
-          setShowAuth={modalProps.setShowAuth}
-          handleLogin={modalProps.handleLogin}
-          handleSignup={modalProps.handleSignup}
+          authMode={authMode}
+          email={email}
+          password={password}
+          authError={authError}
+          authLoading={authLoading}
+          setEmail={setEmail}
+          setPassword={setPassword}
+          setAuthMode={setAuthMode}
+          setAuthError={setAuthError}
+          setShowAuth={setShowAuth}
+          handleLogin={handleLogin}
+          handleSignup={handleSignup}
         />
       )}
       {showRecords && (
         <RecordsModal
-          records={modalProps.records}
-          setShowRecords={modalProps.setShowRecords}
-          loadRecord={modalProps.loadRecord}
-          deleteRecord={modalProps.deleteRecord}
-          duplicateRecord={modalProps.duplicateRecord}
-          editingRecord={modalProps.editingRecord}
-          setEditingRecord={modalProps.setEditingRecord}
-          saveTitle={modalProps.saveTitle}
-          setSaveTitle={modalProps.setSaveTitle}
-          updateRecord={modalProps.updateRecord}
-          saving={modalProps.saving}
-          saveSuccess={modalProps.saveSuccess}
+          records={records}
+          setShowRecords={setShowRecords}
+          loadRecord={loadRecord}
+          deleteRecord={deleteRecord}
+          duplicateRecord={duplicateRecord}
+          editingRecord={editingRecord}
+          setEditingRecord={setEditingRecord}
+          saveTitle={saveTitle}
+          setSaveTitle={setSaveTitle}
+          updateRecord={updateRecord}
+          saving={saving}
+          saveSuccess={saveSuccess}
         />
       )}
     </>
   );
 
-  // ── 결과 페이지 ──────────────────────────────────────
+  // ── 결과 페이지 ─────────────────────────────────────
   if (page === 'result') {
     const totalContainers = containerLoads.length;
     const DL = 660,
@@ -1807,8 +1707,8 @@ export default function Home() {
           onLogin={() => setShowAuth(true)}
           onLogout={handleLogout}
           onRecords={loadRecords}
+          onBack={() => setPage('input')}
         />
-
         <div style={{ maxWidth: 1000, margin: '0 auto', padding: '32px 24px' }}>
           <div style={{ marginBottom: 32 }}>
             <h1
@@ -1826,7 +1726,6 @@ export default function Home() {
             </p>
           </div>
 
-          {/* 저장 */}
           {user && (
             <div
               style={{
@@ -1883,7 +1782,6 @@ export default function Home() {
             </div>
           )}
 
-          {/* 요약 카드 */}
           <div
             style={{
               display: 'grid',
@@ -1948,7 +1846,6 @@ export default function Home() {
             ))}
           </div>
 
-          {/* 컨테이너별 배치도 */}
           {containerLoads.map((load, ci) => {
             const ct = load.containerType;
             const loadedCbm = load.boxes.reduce(
@@ -1961,7 +1858,6 @@ export default function Home() {
               scaleW = DW / ct.width,
               scaleH = DH / ct.height;
             const isGood = Number(cbmRate) > 80;
-
             return (
               <div
                 key={load.containerId}
@@ -2042,64 +1938,43 @@ export default function Home() {
                     )}
                   </div>
                   <div style={{ display: 'flex', gap: 20, fontSize: 13 }}>
-                    <div style={{ textAlign: 'right' }}>
-                      <div
-                        style={{
-                          fontSize: 11,
-                          color: theme.textMuted,
-                          marginBottom: 2,
-                        }}
-                      >
-                        CBM
-                      </div>
-                      <div style={{ fontWeight: 700, color: theme.text }}>
-                        {loadedCbm.toFixed(2)}{' '}
-                        <span
-                          style={{ color: theme.textMuted, fontWeight: 400 }}
+                    {[
+                      {
+                        label: 'CBM',
+                        value: `${loadedCbm.toFixed(2)} / ${ct.maxCbm}`,
+                      },
+                      {
+                        label: '중량',
+                        value: `${loadedWeight.toLocaleString()} / ${ct.maxWeight.toLocaleString()}kg`,
+                      },
+                      {
+                        label: '적재율',
+                        value: `${cbmRate}%`,
+                        big: true,
+                        color: isGood ? theme.success : theme.warning,
+                      },
+                    ].map((item) => (
+                      <div key={item.label} style={{ textAlign: 'right' }}>
+                        <div
+                          style={{
+                            fontSize: 11,
+                            color: theme.textMuted,
+                            marginBottom: 2,
+                          }}
                         >
-                          / {ct.maxCbm}
-                        </span>
-                      </div>
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <div
-                        style={{
-                          fontSize: 11,
-                          color: theme.textMuted,
-                          marginBottom: 2,
-                        }}
-                      >
-                        중량
-                      </div>
-                      <div style={{ fontWeight: 700, color: theme.text }}>
-                        {loadedWeight.toLocaleString()}{' '}
-                        <span
-                          style={{ color: theme.textMuted, fontWeight: 400 }}
+                          {item.label}
+                        </div>
+                        <div
+                          style={{
+                            fontWeight: item.big ? 800 : 700,
+                            fontSize: item.big ? 18 : 13,
+                            color: item.color || theme.text,
+                          }}
                         >
-                          / {ct.maxWeight.toLocaleString()}kg
-                        </span>
+                          {item.value}
+                        </div>
                       </div>
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <div
-                        style={{
-                          fontSize: 11,
-                          color: theme.textMuted,
-                          marginBottom: 2,
-                        }}
-                      >
-                        적재율
-                      </div>
-                      <div
-                        style={{
-                          fontWeight: 800,
-                          fontSize: 18,
-                          color: isGood ? theme.success : theme.warning,
-                        }}
-                      >
-                        {cbmRate}%
-                      </div>
-                    </div>
+                    ))}
                   </div>
                 </div>
 
@@ -2125,295 +2000,223 @@ export default function Home() {
                 </div>
 
                 <div style={{ display: 'flex', gap: 16, marginBottom: 12 }}>
-                  {/* 상면도 */}
-                  <div style={{ flex: 1 }}>
-                    <div
-                      style={{
-                        fontSize: 11,
-                        fontWeight: 600,
-                        color: theme.textMuted,
-                        marginBottom: 8,
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.5px',
-                      }}
-                    >
-                      상면도 (위에서)
-                    </div>
-                    <div
-                      style={{
-                        position: 'relative',
-                        height: DW + 4,
-                        background: '#f8faff',
-                        border: `2px solid ${theme.primary}20`,
-                        borderRadius: 12,
-                        overflow: 'hidden',
-                      }}
-                    >
+                  {[
+                    {
+                      label: '상면도 (위에서)',
+                      bg: '#f8faff',
+                      border: `2px solid ${theme.primary}20`,
+                      isTop: true,
+                    },
+                    {
+                      label: '측면도 (옆에서)',
+                      bg: '#f5faf7',
+                      border: `2px solid ${theme.success}20`,
+                      isTop: false,
+                    },
+                  ].map(({ label, bg, border, isTop }) => (
+                    <div key={label} style={{ flex: 1 }}>
                       <div
                         style={{
-                          position: 'absolute',
-                          top: 6,
-                          left: 10,
-                          fontSize: 9,
-                          fontWeight: 700,
-                          color: theme.primary,
-                          opacity: 0.7,
-                          zIndex: 2,
+                          fontSize: 11,
+                          fontWeight: 600,
+                          color: theme.textMuted,
+                          marginBottom: 8,
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.5px',
                         }}
                       >
-                        {ct.name}
+                        {label}
                       </div>
                       <div
                         style={{
-                          position: 'absolute',
-                          top: `${load.cogY * 100}%`,
-                          left: 0,
-                          right: 0,
-                          height: 1,
-                          background: theme.danger,
-                          opacity: 0.2,
-                          zIndex: 3,
+                          position: 'relative',
+                          height: (isTop ? DW : DH) + 4,
+                          background: bg,
+                          border,
+                          borderRadius: 12,
+                          overflow: 'hidden',
                         }}
-                      />
-                      <div
-                        style={{
-                          position: 'absolute',
-                          left: `${load.cogX * 100}%`,
-                          top: 0,
-                          bottom: 0,
-                          width: 1,
-                          background: theme.danger,
-                          opacity: 0.2,
-                          zIndex: 3,
-                        }}
-                      />
-                      <div
-                        style={{
-                          position: 'absolute',
-                          left: `${load.cogX * 100}%`,
-                          top: `${load.cogY * 100}%`,
-                          transform: 'translate(-50%,-50%)',
-                          zIndex: 4,
-                          width: 8,
-                          height: 8,
-                          borderRadius: '50%',
-                          background:
-                            load.xImbalance || load.yImbalance
-                              ? theme.danger
-                              : theme.success,
-                          border: '2px solid white',
-                          boxShadow: '0 0 6px rgba(0,0,0,0.2)',
-                        }}
-                      />
-                      {[...load.boxes]
-                        .sort((a, b) => a.z - b.z)
-                        .map((box, bi) => {
-                          const isHovered = hoveredBox === box;
-                          const px = box.x * scaleL,
-                            py = box.y * scaleW;
-                          const pw = box.l * scaleL,
-                            ph = box.w * scaleW;
-                          const opacity = 0.65 + (box.z / ct.height) * 0.35;
-                          return (
+                      >
+                        {isTop && (
+                          <>
                             <div
-                              key={bi}
-                              onMouseEnter={(e) => {
-                                setHoveredBox(box);
-                                setTooltipPos({ x: e.clientX, y: e.clientY });
-                              }}
-                              onMouseMove={(e) =>
-                                setTooltipPos({ x: e.clientX, y: e.clientY })
-                              }
-                              onMouseLeave={() => setHoveredBox(null)}
                               style={{
                                 position: 'absolute',
-                                left: px,
-                                top: py,
-                                width: pw,
-                                height: ph,
-                                background: box.color,
-                                opacity,
-                                borderRadius: 3,
-                                cursor: 'pointer',
-                                overflow: 'hidden',
-                                border: isHovered
-                                  ? '2px solid white'
-                                  : '1px solid rgba(255,255,255,0.5)',
-                                boxShadow: isHovered
-                                  ? `0 0 0 2px ${box.color},0 4px 12px rgba(0,0,0,0.15)`
-                                  : 'none',
-                                zIndex: isHovered ? 20 : box.z + 1,
-                                transition: 'all 0.15s ease',
+                                top: 6,
+                                left: 10,
+                                fontSize: 9,
+                                fontWeight: 700,
+                                color: theme.primary,
+                                opacity: 0.7,
+                                zIndex: 2,
                               }}
                             >
-                              {pw > 24 && ph > 16 && (
-                                <div
-                                  style={{
-                                    color: 'white',
-                                    fontSize: 7,
-                                    fontWeight: 700,
-                                    padding: '2px 3px',
-                                    overflow: 'hidden',
-                                    textOverflow: 'ellipsis',
-                                    whiteSpace: 'nowrap',
-                                    textShadow: '0 1px 2px rgba(0,0,0,0.3)',
-                                  }}
-                                >
-                                  {box.cargoName || '화물'}
-                                </div>
-                              )}
-                              {box.noStack && (
-                                <div
-                                  style={{
-                                    position: 'absolute',
-                                    top: 1,
-                                    right: 1,
-                                    background: 'rgba(159,75,75,0.9)',
-                                    color: 'white',
-                                    fontSize: 5,
-                                    padding: '1px 2px',
-                                    borderRadius: 2,
-                                    fontWeight: 800,
-                                  }}
-                                >
-                                  NO
-                                </div>
-                              )}
-                              {box.noTopLoad && (
-                                <div
-                                  style={{
-                                    position: 'absolute',
-                                    top: 1,
-                                    left: 1,
-                                    background: 'rgba(146,114,74,0.9)',
-                                    color: 'white',
-                                    fontSize: 5,
-                                    padding: '1px 2px',
-                                    borderRadius: 2,
-                                    fontWeight: 800,
-                                  }}
-                                >
-                                  NT
-                                </div>
-                              )}
+                              {ct.name}
                             </div>
-                          );
-                        })}
-                    </div>
-                    <div
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        fontSize: 10,
-                        color: theme.textMuted,
-                        marginTop: 4,
-                      }}
-                    >
-                      <span>0cm</span>
-                      <span>{ct.length}cm</span>
-                    </div>
-                  </div>
-
-                  {/* 측면도 */}
-                  <div style={{ flex: 1 }}>
-                    <div
-                      style={{
-                        fontSize: 11,
-                        fontWeight: 600,
-                        color: theme.textMuted,
-                        marginBottom: 8,
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.5px',
-                      }}
-                    >
-                      측면도 (옆에서)
-                    </div>
-                    <div
-                      style={{
-                        position: 'relative',
-                        height: DH + 4,
-                        background: '#f5faf7',
-                        border: `2px solid ${theme.success}20`,
-                        borderRadius: 12,
-                        overflow: 'hidden',
-                      }}
-                    >
-                      {[...load.boxes]
-                        .sort((a, b) => a.y - b.y)
-                        .map((box, bi) => {
-                          const isHovered = hoveredBox === box;
-                          const px = box.x * scaleL;
-                          const pz = (ct.height - box.z - box.h) * scaleH;
-                          const pw = box.l * scaleL,
-                            ph = box.h * scaleH;
-                          const opacity = 0.5 + (box.y / ct.width) * 0.5;
-                          return (
                             <div
-                              key={bi}
-                              onMouseEnter={(e) => {
-                                setHoveredBox(box);
-                                setTooltipPos({ x: e.clientX, y: e.clientY });
-                              }}
-                              onMouseMove={(e) =>
-                                setTooltipPos({ x: e.clientX, y: e.clientY })
-                              }
-                              onMouseLeave={() => setHoveredBox(null)}
                               style={{
                                 position: 'absolute',
-                                left: px,
-                                top: pz,
-                                width: pw,
-                                height: Math.max(ph, 1),
-                                background: box.color,
-                                opacity,
-                                borderRadius: 3,
-                                cursor: 'pointer',
-                                overflow: 'hidden',
-                                border: isHovered
-                                  ? '2px solid white'
-                                  : '1px solid rgba(255,255,255,0.5)',
-                                boxShadow: isHovered
-                                  ? `0 0 0 2px ${box.color}`
-                                  : 'none',
-                                zIndex: isHovered
-                                  ? 20
-                                  : 10 - Math.floor((box.y / ct.width) * 10),
-                                transition: 'all 0.15s ease',
+                                top: `${load.cogY * 100}%`,
+                                left: 0,
+                                right: 0,
+                                height: 1,
+                                background: theme.danger,
+                                opacity: 0.2,
+                                zIndex: 3,
                               }}
-                            >
-                              {pw > 24 && ph > 16 && (
-                                <div
-                                  style={{
-                                    color: 'white',
-                                    fontSize: 7,
-                                    fontWeight: 700,
-                                    padding: '2px 3px',
-                                    overflow: 'hidden',
-                                    textOverflow: 'ellipsis',
-                                    whiteSpace: 'nowrap',
-                                    textShadow: '0 1px 2px rgba(0,0,0,0.3)',
-                                  }}
-                                >
-                                  {box.cargoName || '화물'}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
+                            />
+                            <div
+                              style={{
+                                position: 'absolute',
+                                left: `${load.cogX * 100}%`,
+                                top: 0,
+                                bottom: 0,
+                                width: 1,
+                                background: theme.danger,
+                                opacity: 0.2,
+                                zIndex: 3,
+                              }}
+                            />
+                            <div
+                              style={{
+                                position: 'absolute',
+                                left: `${load.cogX * 100}%`,
+                                top: `${load.cogY * 100}%`,
+                                transform: 'translate(-50%,-50%)',
+                                zIndex: 4,
+                                width: 8,
+                                height: 8,
+                                borderRadius: '50%',
+                                background:
+                                  load.xImbalance || load.yImbalance
+                                    ? theme.danger
+                                    : theme.success,
+                                border: '2px solid white',
+                                boxShadow: '0 0 6px rgba(0,0,0,0.2)',
+                              }}
+                            />
+                          </>
+                        )}
+                        {[...load.boxes]
+                          .sort((a, b) => (isTop ? a.z - b.z : a.y - b.y))
+                          .map((box, bi) => {
+                            const isHovered = hoveredBox === box;
+                            const px = box.x * scaleL;
+                            const py = isTop
+                              ? box.y * scaleW
+                              : (ct.height - box.z - box.h) * scaleH;
+                            const pw = box.l * scaleL;
+                            const ph = isTop ? box.w * scaleW : box.h * scaleH;
+                            const opacity = isTop
+                              ? 0.65 + (box.z / ct.height) * 0.35
+                              : 0.5 + (box.y / ct.width) * 0.5;
+                            const zIdx = isTop
+                              ? isHovered
+                                ? 20
+                                : box.z + 1
+                              : isHovered
+                              ? 20
+                              : 10 - Math.floor((box.y / ct.width) * 10);
+                            return (
+                              <div
+                                key={bi}
+                                onMouseEnter={(e) => {
+                                  setHoveredBox(box);
+                                  setTooltipPos({ x: e.clientX, y: e.clientY });
+                                }}
+                                onMouseMove={(e) =>
+                                  setTooltipPos({ x: e.clientX, y: e.clientY })
+                                }
+                                onMouseLeave={() => setHoveredBox(null)}
+                                style={{
+                                  position: 'absolute',
+                                  left: px,
+                                  top: py,
+                                  width: pw,
+                                  height: Math.max(ph, 1),
+                                  background: box.color,
+                                  opacity,
+                                  borderRadius: 3,
+                                  cursor: 'pointer',
+                                  overflow: 'hidden',
+                                  border: isHovered
+                                    ? '2px solid white'
+                                    : '1px solid rgba(255,255,255,0.5)',
+                                  boxShadow: isHovered
+                                    ? `0 0 0 2px ${box.color},0 4px 12px rgba(0,0,0,0.15)`
+                                    : 'none',
+                                  zIndex: zIdx,
+                                  transition: 'all 0.15s ease',
+                                }}
+                              >
+                                {pw > 24 && ph > 16 && (
+                                  <div
+                                    style={{
+                                      color: 'white',
+                                      fontSize: 7,
+                                      fontWeight: 700,
+                                      padding: '2px 3px',
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis',
+                                      whiteSpace: 'nowrap',
+                                      textShadow: '0 1px 2px rgba(0,0,0,0.3)',
+                                    }}
+                                  >
+                                    {box.cargoName || '화물'}
+                                  </div>
+                                )}
+                                {box.noStack && (
+                                  <div
+                                    style={{
+                                      position: 'absolute',
+                                      top: 1,
+                                      right: 1,
+                                      background: 'rgba(159,75,75,0.9)',
+                                      color: 'white',
+                                      fontSize: 5,
+                                      padding: '1px 2px',
+                                      borderRadius: 2,
+                                      fontWeight: 800,
+                                    }}
+                                  >
+                                    NO
+                                  </div>
+                                )}
+                                {box.noTopLoad && (
+                                  <div
+                                    style={{
+                                      position: 'absolute',
+                                      top: 1,
+                                      left: 1,
+                                      background: 'rgba(146,114,74,0.9)',
+                                      color: 'white',
+                                      fontSize: 5,
+                                      padding: '1px 2px',
+                                      borderRadius: 2,
+                                      fontWeight: 800,
+                                    }}
+                                  >
+                                    NT
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                      </div>
+                      <div
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          fontSize: 10,
+                          color: theme.textMuted,
+                          marginTop: 4,
+                        }}
+                      >
+                        <span>0cm</span>
+                        <span>{ct.length}cm</span>
+                      </div>
                     </div>
-                    <div
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        fontSize: 10,
-                        color: theme.textMuted,
-                        marginTop: 4,
-                      }}
-                    >
-                      <span>0cm</span>
-                      <span>{ct.length}cm</span>
-                    </div>
-                  </div>
+                  ))}
                 </div>
                 <div style={{ fontSize: 11, color: theme.textMuted }}>
                   💡 박스 위에 마우스를 올리면 상세 정보 · NO: 완전다단불가 ·
@@ -2423,7 +2226,6 @@ export default function Home() {
             );
           })}
 
-          {/* 범례 */}
           <div
             style={{
               background: 'white',
@@ -2477,7 +2279,6 @@ export default function Home() {
             </div>
           </div>
 
-          {/* 품목별 요약 */}
           <div
             style={{
               background: 'white',
@@ -2643,7 +2444,7 @@ export default function Home() {
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: 12, marginBottom: 0 }}>
+          <div style={{ display: 'flex', gap: 12 }}>
             <button
               onClick={() => setPage('input')}
               style={{
@@ -2680,7 +2481,6 @@ export default function Home() {
             </button>
           </div>
         </div>
-
         <Footer />
         {hoveredBox && <BoxTooltip box={hoveredBox} />}
         <Modals />
@@ -2688,7 +2488,7 @@ export default function Home() {
     );
   }
 
-  // ── 입력 페이지 ──────────────────────────────────────
+  // ── 입력 페이지 ─────────────────────────────────────
   return (
     <div
       style={{
@@ -2703,7 +2503,6 @@ export default function Home() {
         onLogout={handleLogout}
         onRecords={loadRecords}
       />
-
       <div style={{ maxWidth: 1000, margin: '0 auto', padding: '40px 24px' }}>
         {/* 히어로 */}
         <div style={{ textAlign: 'center', marginBottom: 48 }}>
@@ -2936,7 +2735,17 @@ export default function Home() {
                 {cargos.map((c, idx) => (
                   <tr
                     key={c.id}
-                    style={{ borderBottom: `1px solid ${theme.border}` }}
+                    style={{
+                      borderBottom: `1px solid ${theme.border}`,
+                      // ✅ 하이라이트: 왼쪽 초록 세로선 + 연한 초록 배경
+                      background: c.highlighted
+                        ? 'rgba(77,124,96,0.07)'
+                        : 'transparent',
+                      boxShadow: c.highlighted
+                        ? `inset 3px 0 0 ${theme.success}`
+                        : 'none',
+                      transition: 'background 0.5s ease, box-shadow 0.5s ease',
+                    }}
                   >
                     <td style={{ padding: '10px 12px' }}>
                       <div
@@ -3002,8 +2811,8 @@ export default function Home() {
                     <td style={{ padding: '10px 12px', textAlign: 'center' }}>
                       <input
                         type="checkbox"
-                        checked={c.noStack}
-                        onChange={(e) => {
+                        checked={c.noStack || false}
+                        onChange={(e) =>
                           setCargos((prev) =>
                             prev.map((item) =>
                               item.id === c.id
@@ -3016,8 +2825,8 @@ export default function Home() {
                                   }
                                 : item
                             )
-                          );
-                        }}
+                          )
+                        }
                         style={{
                           width: 16,
                           height: 16,
@@ -3029,8 +2838,8 @@ export default function Home() {
                     <td style={{ padding: '10px 12px', textAlign: 'center' }}>
                       <input
                         type="checkbox"
-                        checked={c.noTopLoad}
-                        onChange={(e) => {
+                        checked={c.noTopLoad || false}
+                        onChange={(e) =>
                           setCargos((prev) =>
                             prev.map((item) =>
                               item.id === c.id
@@ -3043,8 +2852,8 @@ export default function Home() {
                                   }
                                 : item
                             )
-                          );
-                        }}
+                          )
+                        }
                         style={{
                           width: 16,
                           height: 16,
@@ -3159,7 +2968,6 @@ export default function Home() {
           </button>
         </div>
       </div>
-
       <Footer />
       <Modals />
     </div>
@@ -3175,4 +2983,16 @@ const inputStyle: React.CSSProperties = {
   outline: 'none',
   fontFamily: 'inherit',
   transition: 'border-color 0.2s',
+};
+
+const navBtnStyle: React.CSSProperties = {
+  padding: '8px 16px',
+  borderRadius: 10,
+  border: `1.5px solid ${theme.primary}`,
+  background: theme.primaryLight,
+  color: theme.primary,
+  fontSize: 13,
+  fontWeight: 700,
+  cursor: 'pointer',
+  fontFamily: 'inherit',
 };

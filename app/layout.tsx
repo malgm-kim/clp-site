@@ -15,6 +15,7 @@ export const metadata: Metadata = {
     images: [
       {
         url: 'https://clp-site.vercel.app/og-image.png',
+alt: 'CLP Studio — 무료 컨테이너 적재 계산기',
         width: 1200,
         height: 630,
         alt: 'CLP Studio',

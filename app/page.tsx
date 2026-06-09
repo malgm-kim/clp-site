@@ -1451,17 +1451,22 @@ export default function Home() {
           messages: [
             {
               role: 'user',
-              content: `다음 텍스트에서 화물 정보를 추출해줘. 반드시 JSON 배열만 반환하고 다른 텍스트는 절대 쓰지 마.
+              content: `다음 텍스트에서 화물 치수 정보를 추출해서 JSON 배열만 반환해. 다른 텍스트 절대 쓰지 마.
 
-규칙:
-- 치수는 항상 CM 단위로 변환 (MM이면 ÷10, M이면 ×100, 1000 이상이면 MM으로 간주해서 ÷10)
-- 수량 없으면 1
-- 중량, KG, 적재 관련 텍스트는 무시
-- length, width, height, quantity 키만 사용
-
-입력: ${quickInput}
-
-출력 예시: [{"length":120,"width":80,"height":140,"quantity":2},{"length":100,"width":90,"height":110,"quantity":1}]`,
+              단위 변환 규칙:
+              - 숫자가 모두 1000 이상이면 MM → ÷10 해서 CM으로
+              - 숫자 중 하나라도 소수점이 있으면 M → ×100 해서 CM으로
+              - 숫자가 100~999 사이면 MM일 가능성 높음 → 실제 물류 박스 크기 기준으로 판단
+                (예: 805*920*970 → 실제 박스가 8m×9m×9m일 수 없으므로 MM → 80.5*92*97 CM)
+                (예: 120*80*100 → 일반적인 박스 크기이므로 CM 그대로)
+              - 박스 크기가 비현실적으로 크면 (한 변이 300cm 이상) MM으로 재판단
+              - KG, 중량, 적재 관련 텍스트 무시
+              - 수량 없으면 1
+              - 키: length, width, height, quantity
+              
+              입력: ${quickInput}
+              
+              출력 예시: [{"length":80.5,"width":92,"height":97,"quantity":2}]`,
             },
           ],
         }),
@@ -1548,7 +1553,94 @@ export default function Home() {
     // ✅ 브라우저 히스토리에 추가 → 뒤로가기 가능
     window.history.pushState({ page: 'result' }, '', '');
   };
+  const calculateDraft = async () => {
+    setCalculating(true);
+    await new Promise((resolve) => setTimeout(resolve, 50));
 
+    const ct20GP = CONTAINER_TYPES.find((ct) => ct.name === '20GP')!;
+
+    // 20GP 1개에 최대한 채우기
+    const allItems = [...cargos].flatMap((c) =>
+      Array.from({ length: c.quantity }, () => ({ ...c, quantity: 1 }))
+    );
+
+    const strategies = [
+      (b: CargoItem[]) =>
+        [...b].sort((a, z) => {
+          if (a.noStack !== z.noStack) return a.noStack ? -1 : 1;
+          return z.length * z.width - a.length * a.width;
+        }),
+      (b: CargoItem[]) =>
+        [...b].sort((a, z) => {
+          if (a.noStack !== z.noStack) return a.noStack ? -1 : 1;
+          return z.length * z.width * z.height - a.length * a.width * a.height;
+        }),
+      (b: CargoItem[]) =>
+        [...b].sort((a, z) => {
+          if (a.noStack !== z.noStack) return a.noStack ? -1 : 1;
+          return z.height - a.height;
+        }),
+      (b: CargoItem[]) =>
+        [...b].sort((a, z) => {
+          if (a.noStack !== z.noStack) return a.noStack ? -1 : 1;
+          return a.length * a.width * a.height - z.length * z.width * z.height;
+        }),
+      (b: CargoItem[]) =>
+        [...b].sort((a, z) => {
+          if (a.noStack !== z.noStack) return a.noStack ? -1 : 1;
+          return Math.max(z.length, z.width) - Math.max(a.length, a.width);
+        }),
+    ];
+
+    // 5가지 전략 중 가장 많이 들어가는 것 선택
+    let bestBoxes: PlacedBox3D[] = [];
+    let bestRemaining: CargoItem[] = [];
+
+    for (const strategy of strategies) {
+      const { boxes, remaining } = pack3D(strategy(allItems), cargos, ct20GP);
+      if (boxes.length > bestBoxes.length) {
+        bestBoxes = boxes;
+        bestRemaining = remaining;
+      }
+    }
+
+    // ✅ 결과를 containerLoads에 저장 (20GP 1개만)
+    const cog = calcCOG(bestBoxes, ct20GP.length, ct20GP.width);
+    setContainerLoads([
+      {
+        containerId: 0,
+        containerType: ct20GP,
+        boxes: bestBoxes,
+        cogX: cog.x,
+        cogY: cog.y,
+        xImbalance: Math.abs(cog.x - 0.5) > 0.1,
+        yImbalance: Math.abs(cog.y - 0.5) > 0.1,
+      },
+    ]);
+
+    // ✅ 못 들어간 화물은 입력창에 다시 그룹화해서 남겨둠
+    // 같은 id끼리 수량 합산
+    const remainingGrouped = bestRemaining.reduce((acc, item) => {
+      const existing = acc.find((a) => a.id === item.id);
+      if (existing) existing.quantity += 1;
+      else acc.push({ ...item, quantity: 1 });
+      return acc;
+    }, [] as CargoItem[]);
+
+    // 들어간 화물은 수량 줄이기
+    setCargos((prev) =>
+      prev
+        .map((c) => {
+          const remainCount =
+            remainingGrouped.find((r) => r.id === c.id)?.quantity || 0;
+          return { ...c, quantity: remainCount };
+        })
+        .filter((c) => c.quantity > 0)
+    );
+
+    setCalculating(false);
+    setPage('result');
+  };
   const BoxTooltip = ({ box }: { box: PlacedBox3D }) => (
     <div
       style={{
@@ -3022,29 +3114,50 @@ export default function Home() {
         </div>
 
         {/* 계산 버튼 */}
-        <button
-          onClick={calculate}
-          disabled={calculating}
-          style={{
-            width: '100%',
-            padding: 18,
-            borderRadius: 16,
-            border: 'none',
-            background: calculating
-              ? '#a8a29e'
-              : 'linear-gradient(135deg,#44403c,#57534e)',
-            color: 'white',
-            fontWeight: 800,
-            fontSize: 16,
-            cursor: calculating ? 'not-allowed' : 'pointer',
-            fontFamily: 'inherit',
-            boxShadow: calculating ? 'none' : '0 8px 24px rgba(68,64,60,0.2)',
-            transition: 'all 0.2s',
-            letterSpacing: '0.3px',
-          }}
-        >
-          {calculating ? '⏳ 최적 배치 계산 중...' : '🔍 최적 적재 계산하기'}
-        </button>
+        <div style={{ display: 'flex', gap: 12 }}>
+          <button
+            onClick={calculate}
+            disabled={calculating}
+            style={{
+              flex: 1,
+              padding: 18,
+              borderRadius: 16,
+              border: 'none',
+              background: calculating
+                ? '#a8a29e'
+                : 'linear-gradient(135deg,#44403c,#57534e)',
+              color: 'white',
+              fontWeight: 800,
+              fontSize: 16,
+              cursor: calculating ? 'not-allowed' : 'pointer',
+              fontFamily: 'inherit',
+              boxShadow: calculating ? 'none' : '0 8px 24px rgba(68,64,60,0.2)',
+              transition: 'all 0.2s',
+              letterSpacing: '0.3px',
+            }}
+          >
+            {calculating ? '⏳ 최적 배치 계산 중...' : '🔍 최적 적재 계산하기'}
+          </button>
+          <button
+            onClick={calculateDraft}
+            disabled={calculating}
+            style={{
+              padding: '18px 24px',
+              borderRadius: 16,
+              border: `2px solid ${theme.success}`,
+              background: 'white',
+              color: theme.success,
+              fontWeight: 800,
+              fontSize: 15,
+              cursor: calculating ? 'not-allowed' : 'pointer',
+              fontFamily: 'inherit',
+              whiteSpace: 'nowrap',
+              transition: 'all 0.2s',
+            }}
+          >
+            📦 20GP DRAFT
+          </button>
+        </div>
       </div>
 
       <Footer />

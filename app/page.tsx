@@ -1641,43 +1641,6 @@ export default function Home() {
     </div>
   );
 
-  const Modals = () => (
-    <>
-      {showAuth && (
-        <AuthModal
-          authMode={authMode}
-          email={email}
-          password={password}
-          authError={authError}
-          authLoading={authLoading}
-          setEmail={setEmail}
-          setPassword={setPassword}
-          setAuthMode={setAuthMode}
-          setAuthError={setAuthError}
-          setShowAuth={setShowAuth}
-          handleLogin={handleLogin}
-          handleSignup={handleSignup}
-        />
-      )}
-      {showRecords && (
-        <RecordsModal
-          records={records}
-          setShowRecords={setShowRecords}
-          loadRecord={loadRecord}
-          deleteRecord={deleteRecord}
-          duplicateRecord={duplicateRecord}
-          editingRecord={editingRecord}
-          setEditingRecord={setEditingRecord}
-          saveTitle={saveTitle}
-          setSaveTitle={setSaveTitle}
-          updateRecord={updateRecord}
-          saving={saving}
-          saveSuccess={saveSuccess}
-        />
-      )}
-    </>
-  );
-
   // ── 결과 페이지 ─────────────────────────────────────
   if (page === 'result') {
     const totalContainers = containerLoads.length;
@@ -2483,7 +2446,38 @@ export default function Home() {
         </div>
         <Footer />
         {hoveredBox && <BoxTooltip box={hoveredBox} />}
-        <Modals />
+        {showAuth && (
+          <AuthModal
+            authMode={authMode}
+            email={email}
+            password={password}
+            authError={authError}
+            authLoading={authLoading}
+            setEmail={setEmail}
+            setPassword={setPassword}
+            setAuthMode={setAuthMode}
+            setAuthError={setAuthError}
+            setShowAuth={setShowAuth}
+            handleLogin={handleLogin}
+            handleSignup={handleSignup}
+          />
+        )}
+        {showRecords && (
+          <RecordsModal
+            records={records}
+            setShowRecords={setShowRecords}
+            loadRecord={loadRecord}
+            deleteRecord={deleteRecord}
+            duplicateRecord={duplicateRecord}
+            editingRecord={editingRecord}
+            setEditingRecord={setEditingRecord}
+            saveTitle={saveTitle}
+            setSaveTitle={setSaveTitle}
+            updateRecord={updateRecord}
+            saving={saving}
+            saveSuccess={saveSuccess}
+          />
+        )}
       </div>
     );
   }
@@ -2969,7 +2963,38 @@ export default function Home() {
         </div>
       </div>
       <Footer />
-      <Modals />
+      {showAuth && (
+        <AuthModal
+          authMode={authMode}
+          email={email}
+          password={password}
+          authError={authError}
+          authLoading={authLoading}
+          setEmail={setEmail}
+          setPassword={setPassword}
+          setAuthMode={setAuthMode}
+          setAuthError={setAuthError}
+          setShowAuth={setShowAuth}
+          handleLogin={handleLogin}
+          handleSignup={handleSignup}
+        />
+      )}
+      {showRecords && (
+        <RecordsModal
+          records={records}
+          setShowRecords={setShowRecords}
+          loadRecord={loadRecord}
+          deleteRecord={deleteRecord}
+          duplicateRecord={duplicateRecord}
+          editingRecord={editingRecord}
+          setEditingRecord={setEditingRecord}
+          saveTitle={saveTitle}
+          setSaveTitle={setSaveTitle}
+          updateRecord={updateRecord}
+          saving={saving}
+          saveSuccess={saveSuccess}
+        />
+      )}
     </div>
   );
 }

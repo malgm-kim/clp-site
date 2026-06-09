@@ -1204,7 +1204,15 @@ export default function Home() {
         setUser({ id: session.user.id, email: session.user.email! });
       else setUser(null);
     });
-    return () => subscription.unsubscribe();
+
+    // ✅ 브라우저 뒤로가기 감지
+    const handlePopState = () => setPage('input');
+    window.addEventListener('popstate', handlePopState);
+
+    return () => {
+      subscription.unsubscribe();
+      window.removeEventListener('popstate', handlePopState);
+    };
   }, []);
 
   const toEmail = (id: string) => `${id.trim()}@clp.app`;
@@ -1447,6 +1455,8 @@ export default function Home() {
     setContainerLoads(buildContainerLoads(cargos));
     setCalculating(false);
     setPage('result');
+    // ✅ 브라우저 히스토리에 추가 → 뒤로가기 가능
+    window.history.pushState({ page: 'result' }, '', '');
   };
 
   const BoxTooltip = ({ box }: { box: PlacedBox3D }) => (
@@ -1615,7 +1625,6 @@ export default function Home() {
           onLogin={() => setShowAuth(true)}
           onLogout={handleLogout}
           onRecords={loadRecords}
-          onBack={() => setPage('input')}
         />
 
         <div style={{ maxWidth: 1000, margin: '0 auto', padding: '32px 24px' }}>
@@ -2452,23 +2461,42 @@ export default function Home() {
             </div>
           </div>
 
-          <button
-            onClick={handleReset}
-            style={{
-              width: '100%',
-              padding: 14,
-              borderRadius: 12,
-              border: `1.5px solid ${theme.border}`,
-              background: 'white',
-              color: theme.textSecondary,
-              fontWeight: 600,
-              fontSize: 14,
-              cursor: 'pointer',
-              fontFamily: 'inherit',
-            }}
-          >
-            🗑️ 초기화하고 새로 시작
-          </button>
+          <div style={{ display: 'flex', gap: 12, marginBottom: 0 }}>
+            <button
+              onClick={() => setPage('input')}
+              style={{
+                flex: 1,
+                padding: 14,
+                borderRadius: 12,
+                border: `1.5px solid ${theme.border}`,
+                background: 'white',
+                color: theme.textSecondary,
+                fontWeight: 600,
+                fontSize: 14,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >
+              ← 다시 입력
+            </button>
+            <button
+              onClick={handleReset}
+              style={{
+                flex: 1,
+                padding: 14,
+                borderRadius: 12,
+                border: `1.5px solid ${theme.danger}`,
+                background: '#fef2f2',
+                color: theme.danger,
+                fontWeight: 600,
+                fontSize: 14,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >
+              🗑️ 초기화하고 새로 시작
+            </button>
+          </div>
         </div>
 
         <Footer />

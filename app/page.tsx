@@ -1191,6 +1191,7 @@ export default function Home() {
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
   const [calculating, setCalculating] = useState(false);
   const [editingRecord, setEditingRecord] = useState<ClpRecord | null>(null);
+  const [quickAddLoading, setQuickAddLoading] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -1379,23 +1380,52 @@ export default function Home() {
   };
 
   const parseQuickInput = (text: string) => {
+    // ✅ 쉼표, 줄바꿈, 슬래시(/) 모두 구분자로 처리
+    // 단, 슬래시 뒤에 숫자+KG 패턴은 중량으로 인식하므로 먼저 분리
     return text
-      .split(',')
+      .split(/[,\n\/]/)
       .map((item) => {
-        let s = item
-          .trim()
+        let s = item.trim();
+        if (!s) return null;
+
+        // ✅ MM 단위 감지 (LWH-MM 또는 숫자가 3자리 이상 큰 경우)
+        const isMM = /mm/i.test(s);
+
+        // ✅ KG 앞 숫자까지 제거 (213KG → 통째로 제거)
+        s = s.replace(/\d+(\.\d+)?\s*kg/gi, '');
+
+        // 불필요한 텍스트 제거
+        s = s
           .toLowerCase()
-          .replace(/[*x]/g, ' ')
+          .replace(/다단불가|상단적재|노스택|no\s*stack|lwh|mm|ea|kg/gi, ' ')
+          .replace(/상단에\s*가벼운\s*짐\s*ok|상단\s*ok|top\s*ok/gi, ' ')
+          .replace(/[*×xX\/]/g, ' ')
+          .replace(/\((\d+)\)/g, ' $1')
           .replace(/\s+/g, ' ')
-          .replace(/\((\d+)\)/, ' $1');
-        const nums = s.match(/\d+/g);
+          .trim();
+
+        const nums = s.match(/\d+(\.\d+)?/g);
         if (!nums || nums.length < 3) return null;
-        return {
-          length: +nums[0],
-          width: +nums[1],
-          height: +nums[2],
-          quantity: nums[3] ? +nums[3] : 1,
-        };
+
+        let l = +nums[0],
+          w = +nums[1],
+          h = +nums[2];
+        const qty = nums[3] && +nums[3] < 1000 ? +nums[3] : 1;
+
+        // ✅ MM → CM 변환 (명시적 MM 표기 또는 하나라도 1000 이상이면 자동 감지)
+        if (isMM || l >= 1000 || w >= 1000 || h >= 1000) {
+          l = Math.round(l / 10);
+          w = Math.round(w / 10);
+          h = Math.round(h / 10);
+        }
+        // ✅ M → CM 변환 (소수점 있고 10 미만이면 미터로 간주)
+        else if (l < 10 && w < 10 && h < 10) {
+          l = Math.round(l * 100);
+          w = Math.round(w * 100);
+          h = Math.round(h * 100);
+        }
+
+        return { length: l, width: w, height: h, quantity: qty };
       })
       .filter(Boolean) as {
       length: number;
@@ -1405,24 +1435,84 @@ export default function Home() {
     }[];
   };
 
-  const handleQuickAdd = () => {
-    const parsed = parseQuickInput(quickInput);
-    if (!parsed.length) {
-      alert('형식이 잘못됐어요');
+  const handleQuickAdd = async () => {
+    if (!quickInput.trim()) {
       return;
     }
-    setCargos((prev) => [
-      ...prev,
-      ...parsed.map((p) => ({
-        id: Date.now() + Math.random(),
-        name: '',
-        ...p,
-        weight: 0,
-        noStack: false,
-        noTopLoad: false,
-      })),
-    ]);
-    setQuickInput('');
+    setQuickAddLoading(true);
+
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1000,
+          messages: [
+            {
+              role: 'user',
+              content: `다음 텍스트에서 화물 정보를 추출해줘. 반드시 JSON 배열만 반환하고 다른 텍스트는 절대 쓰지 마.
+
+규칙:
+- 치수는 항상 CM 단위로 변환 (MM이면 ÷10, M이면 ×100, 1000 이상이면 MM으로 간주해서 ÷10)
+- 수량 없으면 1
+- 중량, KG, 적재 관련 텍스트는 무시
+- length, width, height, quantity 키만 사용
+
+입력: ${quickInput}
+
+출력 예시: [{"length":120,"width":80,"height":140,"quantity":2},{"length":100,"width":90,"height":110,"quantity":1}]`,
+            },
+          ],
+        }),
+      });
+
+      const data = await response.json();
+      const text = data.content?.[0]?.text || '[]';
+      const clean = text.replace(/```json|```/g, '').trim();
+      const parsed = JSON.parse(clean);
+
+      if (!parsed.length) {
+        alert('화물 정보를 찾을 수 없어요');
+        return;
+      }
+      setCargos((prev) => [
+        ...prev,
+        ...parsed.map((p: any) => ({
+          id: Date.now() + Math.random(),
+          name: '',
+          length: p.length || 0,
+          width: p.width || 0,
+          height: p.height || 0,
+          weight: 0,
+          quantity: p.quantity || 1,
+          noStack: false,
+          noTopLoad: false,
+        })),
+      ]);
+      setQuickInput('');
+    } catch (e) {
+      // API 실패 시 기존 방식으로 폴백
+      const parsed = parseQuickInput(quickInput);
+      if (!parsed.length) {
+        alert('형식이 잘못됐어요');
+        return;
+      }
+      setCargos((prev) => [
+        ...prev,
+        ...parsed.map((p) => ({
+          id: Date.now() + Math.random(),
+          name: '',
+          ...p,
+          weight: 0,
+          noStack: false,
+          noTopLoad: false,
+        })),
+      ]);
+      setQuickInput('');
+    } finally {
+      setQuickAddLoading(false);
+    }
   };
 
   const addCargo = () =>
@@ -2690,20 +2780,21 @@ export default function Home() {
               />
               <button
                 onClick={handleQuickAdd}
+                disabled={quickAddLoading}
                 style={{
                   padding: '9px 16px',
-                  background: theme.primaryLight,
+                  background: quickAddLoading ? theme.bg : theme.primaryLight,
                   color: theme.primary,
                   border: `1.5px solid ${theme.primary}`,
                   borderRadius: 10,
-                  cursor: 'pointer',
+                  cursor: quickAddLoading ? 'not-allowed' : 'pointer',
                   fontWeight: 700,
                   fontSize: 13,
                   fontFamily: 'inherit',
                   whiteSpace: 'nowrap',
                 }}
               >
-                + 빠른 추가
+                {quickAddLoading ? '⏳ 인식 중...' : '✨ 빠른 추가'}
               </button>
             </div>
           </div>

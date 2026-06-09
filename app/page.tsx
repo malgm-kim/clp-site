@@ -2384,7 +2384,41 @@ export default function Home() {
             🗑️ 초기화하고 새로 시작
           </button>
         </div>
-
+        {/* 푸터 */}
+        <div
+          style={{
+            textAlign: 'center',
+            padding: '32px 24px',
+            borderTop: `1px solid ${theme.border}`,
+            marginTop: 40,
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'center',
+              gap: 24,
+              fontSize: 13,
+              color: theme.textMuted,
+            }}
+          >
+            <a
+              href="/privacy"
+              style={{ color: theme.textMuted, textDecoration: 'none' }}
+            >
+              개인정보처리방침
+            </a>
+            <span>·</span>
+            <span>© 2025 CLP Studio. MADE BY ZERO</span>
+            <span>·</span>
+            <a
+              href="https://clp-site.vercel.app"
+              style={{ color: theme.textMuted, textDecoration: 'none' }}
+            >
+              clp-site.vercel.app
+            </a>
+          </div>
+        </div>
         {hoveredBox && <BoxTooltip box={hoveredBox} />}
         {showAuth && (
           <AuthModal

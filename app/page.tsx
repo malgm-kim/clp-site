@@ -85,21 +85,23 @@ const COLORS = [
 ];
 
 const theme = {
-  bg: '#f5f5f4', // 따뜻한 오프화이트
+  bg: '#f5f5f4',
   card: '#ffffff',
-  primary: '#44403c', // 따뜻한 다크 브라운 (메인 포인트)
+  primary: '#44403c',
   primaryDark: '#292524',
   primaryLight: '#f5f5f4',
-  success: '#4d7c60', // 뮤트 그린
-  warning: '#92724a', // 뮤트 앰버
-  danger: '#9f4b4b', // 뮤트 레드
-  text: '#1c1917', // 거의 블랙
-  textSecondary: '#57534e', // 따뜻한 그레이
-  textMuted: '#a8a29e', // 뮤트 그레이
-  border: '#e7e5e4', // 따뜻한 보더
+  success: '#4d7c60',
+  warning: '#92724a',
+  danger: '#9f4b4b',
+  text: '#1c1917',
+  textSecondary: '#57534e',
+  textMuted: '#a8a29e',
+  border: '#e7e5e4',
   shadow: '0 1px 3px rgba(0,0,0,0.05), 0 4px 16px rgba(0,0,0,0.04)',
   shadowLg: '0 4px 6px rgba(0,0,0,0.04), 0 20px 40px rgba(0,0,0,0.07)',
 };
+
+// ── 알고리즘 함수들 ────────────────────────────────────
 
 function getHorizontalRotations(
   l: number,
@@ -426,6 +428,193 @@ function buildContainerLoads(cargos: CargoItem[]): ContainerLoad3D[] {
   return best!.map((load, i) => ({ ...load, containerId: i }));
 }
 
+// ── 공통 컴포넌트 ──────────────────────────────────────
+
+// ✅ 네비게이션 — 중복 제거를 위해 하나로 통합
+type NavProps = {
+  user: User | null;
+  onLogin: () => void;
+  onLogout: () => void;
+  onRecords: () => void;
+  onBack?: () => void; // 결과 페이지에서만 사용
+};
+
+function Nav({ user, onLogin, onLogout, onRecords, onBack }: NavProps) {
+  return (
+    <nav
+      style={{
+        background: 'white',
+        borderBottom: `1px solid ${theme.border}`,
+        padding: '0 32px',
+        height: 64,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        position: 'sticky',
+        top: 0,
+        zIndex: 100,
+        boxShadow: '0 1px 0 rgba(0,0,0,0.05)',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div
+          style={{
+            width: 36,
+            height: 36,
+            background: 'linear-gradient(135deg,#44403c,#57534e)',
+            borderRadius: 10,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: 18,
+          }}
+        >
+          🚢
+        </div>
+        <span style={{ fontWeight: 800, fontSize: 16, color: theme.text }}>
+          CLP Studio
+        </span>
+      </div>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+        {user ? (
+          <>
+            <span
+              style={{
+                fontSize: 13,
+                color: theme.textSecondary,
+                background: theme.bg,
+                padding: '6px 12px',
+                borderRadius: 8,
+              }}
+            >
+              👤 {user.email?.replace('@clp.app', '')}
+            </span>
+            <button
+              onClick={onRecords}
+              style={{
+                padding: '8px 16px',
+                borderRadius: 10,
+                border: `1.5px solid ${theme.primary}`,
+                background: theme.primaryLight,
+                color: theme.primary,
+                fontSize: 13,
+                fontWeight: 700,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >
+              📋 내 기록
+            </button>
+            <button
+              onClick={onLogout}
+              style={{
+                padding: '8px 14px',
+                borderRadius: 10,
+                border: `1px solid ${theme.border}`,
+                background: 'white',
+                color: theme.textSecondary,
+                fontSize: 13,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >
+              로그아웃
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={onLogin}
+            style={{
+              padding: '8px 18px',
+              borderRadius: 10,
+              border: 'none',
+              background: 'linear-gradient(135deg,#44403c,#57534e)',
+              color: 'white',
+              fontSize: 13,
+              fontWeight: 700,
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+            }}
+          >
+            🔐 {onBack ? '로그인' : '로그인 / 회원가입'}
+          </button>
+        )}
+        {onBack && (
+          <button
+            onClick={onBack}
+            style={{
+              padding: '8px 16px',
+              borderRadius: 10,
+              border: `1px solid ${theme.border}`,
+              background: 'white',
+              color: theme.textSecondary,
+              fontSize: 13,
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+            }}
+          >
+            ← 다시 입력
+          </button>
+        )}
+        {!onBack && (
+          <div
+            style={{
+              fontWeight: 800,
+              fontSize: 13,
+              color: theme.textMuted,
+              background: theme.bg,
+              padding: '6px 12px',
+              borderRadius: 8,
+            }}
+          >
+            MADE BY ZERO
+          </div>
+        )}
+      </div>
+    </nav>
+  );
+}
+
+// ✅ 푸터 — 중복 제거를 위해 하나로 통합
+function Footer() {
+  return (
+    <div
+      style={{
+        textAlign: 'center',
+        padding: '32px 24px',
+        borderTop: `1px solid ${theme.border}`,
+        marginTop: 40,
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'center',
+          gap: 24,
+          fontSize: 13,
+          color: theme.textMuted,
+        }}
+      >
+        <a
+          href="/privacy"
+          style={{ color: theme.textMuted, textDecoration: 'none' }}
+        >
+          개인정보처리방침
+        </a>
+        <span>·</span>
+        <span>© 2025 CLP Studio. MADE BY ZERO</span>
+        <span>·</span>
+        <a
+          href="https://clp-site.vercel.app"
+          style={{ color: theme.textMuted, textDecoration: 'none' }}
+        >
+          clp-site.vercel.app
+        </a>
+      </div>
+    </div>
+  );
+}
+
 // ── AuthModal ──────────────────────────────────────────
 type AuthModalProps = {
   authMode: 'login' | 'signup';
@@ -510,7 +699,6 @@ function AuthModal({
               : '아이디를 만들고 CLP를 저장하세요'}
           </p>
         </div>
-
         <div style={{ marginBottom: 16 }}>
           <label
             style={{
@@ -538,7 +726,6 @@ function AuthModal({
               fontSize: 14,
               outline: 'none',
               boxSizing: 'border-box',
-              transition: 'border 0.2s',
               fontFamily: 'inherit',
             }}
             onFocus={(e) => (e.target.style.borderColor = theme.primary)}
@@ -576,14 +763,12 @@ function AuthModal({
               fontSize: 14,
               outline: 'none',
               boxSizing: 'border-box',
-              transition: 'border 0.2s',
               fontFamily: 'inherit',
             }}
             onFocus={(e) => (e.target.style.borderColor = theme.primary)}
             onBlur={(e) => (e.target.style.borderColor = theme.border)}
           />
         </div>
-
         {authError && (
           <div
             style={{
@@ -599,7 +784,6 @@ function AuthModal({
             {authError}
           </div>
         )}
-
         <button
           onClick={authMode === 'login' ? handleLogin : handleSignup}
           disabled={authLoading}
@@ -623,7 +807,6 @@ function AuthModal({
             ? '로그인'
             : '회원가입'}
         </button>
-
         <div
           style={{
             display: 'flex',
@@ -759,15 +942,11 @@ function RecordsModal({
               border: 'none',
               fontSize: 16,
               cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
             }}
           >
             ✕
           </button>
         </div>
-
         {records.length === 0 ? (
           <div
             style={{ textAlign: 'center', padding: 60, color: theme.textMuted }}
@@ -787,7 +966,6 @@ function RecordsModal({
                 borderRadius: 16,
                 padding: 20,
                 marginBottom: 12,
-                transition: 'all 0.2s',
                 boxShadow: theme.shadow,
               }}
             >
@@ -1325,7 +1503,7 @@ export default function Home() {
         </div>
       </div>
       <div style={{ fontSize: 11, color: theme.textSecondary }}>
-        <div style={{ marginBottom: 2 }}>
+        <div>
           X: {box.x}cm &nbsp; Y: {box.y}cm &nbsp; Z: {box.z}cm
         </div>
         {box.noStack && (
@@ -1340,6 +1518,72 @@ export default function Home() {
         )}
       </div>
     </div>
+  );
+
+  const modalProps = {
+    showAuth,
+    showRecords,
+    authMode,
+    email,
+    password,
+    authError,
+    authLoading,
+    setEmail,
+    setPassword,
+    setAuthMode,
+    setAuthError,
+    setShowAuth,
+    handleLogin,
+    handleSignup,
+    records,
+    setShowRecords,
+    loadRecord,
+    deleteRecord,
+    duplicateRecord,
+    editingRecord,
+    setEditingRecord,
+    saveTitle,
+    setSaveTitle,
+    updateRecord,
+    saving,
+    saveSuccess,
+  };
+
+  const Modals = () => (
+    <>
+      {showAuth && (
+        <AuthModal
+          authMode={modalProps.authMode}
+          email={modalProps.email}
+          password={modalProps.password}
+          authError={modalProps.authError}
+          authLoading={modalProps.authLoading}
+          setEmail={modalProps.setEmail}
+          setPassword={modalProps.setPassword}
+          setAuthMode={modalProps.setAuthMode}
+          setAuthError={modalProps.setAuthError}
+          setShowAuth={modalProps.setShowAuth}
+          handleLogin={modalProps.handleLogin}
+          handleSignup={modalProps.handleSignup}
+        />
+      )}
+      {showRecords && (
+        <RecordsModal
+          records={modalProps.records}
+          setShowRecords={modalProps.setShowRecords}
+          loadRecord={modalProps.loadRecord}
+          deleteRecord={modalProps.deleteRecord}
+          duplicateRecord={modalProps.duplicateRecord}
+          editingRecord={modalProps.editingRecord}
+          setEditingRecord={modalProps.setEditingRecord}
+          saveTitle={modalProps.saveTitle}
+          setSaveTitle={modalProps.setSaveTitle}
+          updateRecord={modalProps.updateRecord}
+          saving={modalProps.saving}
+          saveSuccess={modalProps.saveSuccess}
+        />
+      )}
+    </>
   );
 
   // ── 결과 페이지 ──────────────────────────────────────
@@ -1366,125 +1610,15 @@ export default function Home() {
           fontFamily: '-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
         }}
       >
-        {/* 상단 네비게이션 */}
-        <nav
-          style={{
-            background: 'white',
-            borderBottom: `1px solid ${theme.border}`,
-            padding: '0 32px',
-            height: 64,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            position: 'sticky',
-            top: 0,
-            zIndex: 100,
-            boxShadow: '0 1px 0 rgba(0,0,0,0.05)',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div
-              style={{
-                width: 36,
-                height: 36,
-                background: 'linear-gradient(135deg,#44403c,#57534e)',
-                borderRadius: 10,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: 18,
-              }}
-            >
-              🚢
-            </div>
-            <span style={{ fontWeight: 800, fontSize: 16, color: theme.text }}>
-              CLP Studio
-            </span>
-          </div>
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-            {user ? (
-              <>
-                <span
-                  style={{
-                    fontSize: 13,
-                    color: theme.textSecondary,
-                    background: theme.bg,
-                    padding: '6px 12px',
-                    borderRadius: 8,
-                  }}
-                >
-                  👤 {user.email?.replace('@clp.app', '')}
-                </span>
-                <button
-                  onClick={loadRecords}
-                  style={{
-                    padding: '8px 16px',
-                    borderRadius: 10,
-                    border: `1.5px solid ${theme.primary}`,
-                    background: theme.primaryLight,
-                    color: theme.primary,
-                    fontSize: 13,
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                    fontFamily: 'inherit',
-                  }}
-                >
-                  📋 내 기록
-                </button>
-                <button
-                  onClick={handleLogout}
-                  style={{
-                    padding: '8px 14px',
-                    borderRadius: 10,
-                    border: `1px solid ${theme.border}`,
-                    background: 'white',
-                    color: theme.textSecondary,
-                    fontSize: 13,
-                    cursor: 'pointer',
-                    fontFamily: 'inherit',
-                  }}
-                >
-                  로그아웃
-                </button>
-              </>
-            ) : (
-              <button
-                onClick={() => setShowAuth(true)}
-                style={{
-                  padding: '8px 18px',
-                  borderRadius: 10,
-                  border: 'none',
-                  background: 'linear-gradient(135deg,#44403c,#57534e)',
-                  color: 'white',
-                  fontSize: 13,
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                  fontFamily: 'inherit',
-                }}
-              >
-                🔐 로그인
-              </button>
-            )}
-            <button
-              onClick={() => setPage('input')}
-              style={{
-                padding: '8px 16px',
-                borderRadius: 10,
-                border: `1px solid ${theme.border}`,
-                background: 'white',
-                color: theme.textSecondary,
-                fontSize: 13,
-                cursor: 'pointer',
-                fontFamily: 'inherit',
-              }}
-            >
-              ← 다시 입력
-            </button>
-          </div>
-        </nav>
+        <Nav
+          user={user}
+          onLogin={() => setShowAuth(true)}
+          onLogout={handleLogout}
+          onRecords={loadRecords}
+          onBack={() => setPage('input')}
+        />
 
         <div style={{ maxWidth: 1000, margin: '0 auto', padding: '32px 24px' }}>
-          {/* 페이지 타이틀 */}
           <div style={{ marginBottom: 32 }}>
             <h1
               style={{
@@ -1501,7 +1635,7 @@ export default function Home() {
             </p>
           </div>
 
-          {/* 저장 섹션 */}
+          {/* 저장 */}
           {user && (
             <div
               style={{
@@ -1567,82 +1701,28 @@ export default function Home() {
               marginBottom: 28,
             }}
           >
-            <div
-              style={{
-                background: 'white',
-                borderRadius: 16,
-                padding: 24,
-                boxShadow: theme.shadow,
-                border: `1px solid ${theme.border}`,
-              }}
-            >
+            {[
+              {
+                label: '총 컨테이너',
+                value: `${totalContainers}개`,
+                color: theme.text,
+                sub: '자동 선택',
+              },
+              {
+                label: '총 CBM',
+                value: `${totalCbm.toFixed(2)} m³`,
+                color: theme.primary,
+                sub: '총 화물 부피',
+              },
+              ...summary.map((s) => ({
+                label: s.name,
+                value: `${s.count}개`,
+                color: theme.success,
+                sub: `최대 ${s.maxCbm} CBM`,
+              })),
+            ].map((stat) => (
               <div
-                style={{
-                  fontSize: 12,
-                  color: theme.textMuted,
-                  fontWeight: 600,
-                  marginBottom: 8,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.5px',
-                }}
-              >
-                총 컨테이너
-              </div>
-              <div style={{ fontSize: 36, fontWeight: 800, color: theme.text }}>
-                {totalContainers}
-                <span style={{ fontSize: 18, fontWeight: 600 }}>개</span>
-              </div>
-              <div
-                style={{ fontSize: 12, color: theme.textMuted, marginTop: 4 }}
-              >
-                자동 선택
-              </div>
-            </div>
-            <div
-              style={{
-                background: 'white',
-                borderRadius: 16,
-                padding: 24,
-                boxShadow: theme.shadow,
-                border: `1px solid ${theme.border}`,
-              }}
-            >
-              <div
-                style={{
-                  fontSize: 12,
-                  color: theme.textMuted,
-                  fontWeight: 600,
-                  marginBottom: 8,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.5px',
-                }}
-              >
-                총 CBM
-              </div>
-              <div
-                style={{ fontSize: 36, fontWeight: 800, color: theme.primary }}
-              >
-                {totalCbm.toFixed(2)}
-                <span
-                  style={{
-                    fontSize: 16,
-                    fontWeight: 600,
-                    color: theme.textMuted,
-                  }}
-                >
-                  {' '}
-                  m³
-                </span>
-              </div>
-              <div
-                style={{ fontSize: 12, color: theme.textMuted, marginTop: 4 }}
-              >
-                총 화물 부피
-              </div>
-            </div>
-            {summary.map((s) => (
-              <div
-                key={s.name}
+                key={stat.label}
                 style={{
                   background: 'white',
                   borderRadius: 16,
@@ -1661,22 +1741,17 @@ export default function Home() {
                     letterSpacing: '0.5px',
                   }}
                 >
-                  {s.name}
+                  {stat.label}
                 </div>
                 <div
-                  style={{
-                    fontSize: 36,
-                    fontWeight: 800,
-                    color: theme.success,
-                  }}
+                  style={{ fontSize: 28, fontWeight: 800, color: stat.color }}
                 >
-                  {s.count}
-                  <span style={{ fontSize: 18, fontWeight: 600 }}>개</span>
+                  {stat.value}
                 </div>
                 <div
                   style={{ fontSize: 12, color: theme.textMuted, marginTop: 4 }}
                 >
-                  최대 {s.maxCbm} CBM
+                  {stat.sub}
                 </div>
               </div>
             ))}
@@ -1708,7 +1783,6 @@ export default function Home() {
                   border: `1px solid ${theme.border}`,
                 }}
               >
-                {/* 헤더 */}
                 <div
                   style={{
                     display: 'flex',
@@ -1724,7 +1798,7 @@ export default function Home() {
                       style={{
                         width: 40,
                         height: 40,
-                        background: isGood ? '#f0fdf4' : '#eff6ff',
+                        background: isGood ? '#f0fdf4' : '#f5f5f4',
                         borderRadius: 12,
                         display: 'flex',
                         alignItems: 'center',
@@ -1756,6 +1830,7 @@ export default function Home() {
                         fontWeight: 700,
                         padding: '5px 12px',
                         borderRadius: 20,
+                        border: `1px solid ${theme.border}`,
                       }}
                     >
                       {ct.name}
@@ -1775,14 +1850,7 @@ export default function Home() {
                       </span>
                     )}
                   </div>
-                  <div
-                    style={{
-                      display: 'flex',
-                      gap: 20,
-                      fontSize: 13,
-                      color: theme.textSecondary,
-                    }}
-                  >
+                  <div style={{ display: 'flex', gap: 20, fontSize: 13 }}>
                     <div style={{ textAlign: 'right' }}>
                       <div
                         style={{
@@ -1810,12 +1878,31 @@ export default function Home() {
                           marginBottom: 2,
                         }}
                       >
+                        중량
+                      </div>
+                      <div style={{ fontWeight: 700, color: theme.text }}>
+                        {loadedWeight.toLocaleString()}{' '}
+                        <span
+                          style={{ color: theme.textMuted, fontWeight: 400 }}
+                        >
+                          / {ct.maxWeight.toLocaleString()}kg
+                        </span>
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div
+                        style={{
+                          fontSize: 11,
+                          color: theme.textMuted,
+                          marginBottom: 2,
+                        }}
+                      >
                         적재율
                       </div>
                       <div
                         style={{
                           fontWeight: 800,
-                          fontSize: 16,
+                          fontSize: 18,
                           color: isGood ? theme.success : theme.warning,
                         }}
                       >
@@ -1825,7 +1912,6 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* 프로그레스 바 */}
                 <div
                   style={{
                     background: theme.bg,
@@ -1843,13 +1929,12 @@ export default function Home() {
                         ? `linear-gradient(90deg,${theme.success},#6da882)`
                         : `linear-gradient(90deg,${theme.primary},#78716c)`,
                       borderRadius: 8,
-                      transition: 'width 0.5s ease',
                     }}
                   />
                 </div>
 
-                {/* 뷰 */}
                 <div style={{ display: 'flex', gap: 16, marginBottom: 12 }}>
+                  {/* 상면도 */}
                   <div style={{ flex: 1 }}>
                     <div
                       style={{
@@ -1992,7 +2077,7 @@ export default function Home() {
                                     position: 'absolute',
                                     top: 1,
                                     right: 1,
-                                    background: 'rgba(239,68,68,0.9)',
+                                    background: 'rgba(159,75,75,0.9)',
                                     color: 'white',
                                     fontSize: 5,
                                     padding: '1px 2px',
@@ -2009,7 +2094,7 @@ export default function Home() {
                                     position: 'absolute',
                                     top: 1,
                                     left: 1,
-                                    background: 'rgba(245,158,11,0.9)',
+                                    background: 'rgba(146,114,74,0.9)',
                                     color: 'white',
                                     fontSize: 5,
                                     padding: '1px 2px',
@@ -2038,6 +2123,7 @@ export default function Home() {
                     </div>
                   </div>
 
+                  {/* 측면도 */}
                   <div style={{ flex: 1 }}>
                     <div
                       style={{
@@ -2055,7 +2141,7 @@ export default function Home() {
                       style={{
                         position: 'relative',
                         height: DH + 4,
-                        background: '#f0fdf6',
+                        background: '#f5faf7',
                         border: `2px solid ${theme.success}20`,
                         borderRadius: 12,
                         overflow: 'hidden',
@@ -2384,74 +2470,10 @@ export default function Home() {
             🗑️ 초기화하고 새로 시작
           </button>
         </div>
-        {/* 푸터 */}
-        <div
-          style={{
-            textAlign: 'center',
-            padding: '32px 24px',
-            borderTop: `1px solid ${theme.border}`,
-            marginTop: 40,
-          }}
-        >
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'center',
-              gap: 24,
-              fontSize: 13,
-              color: theme.textMuted,
-            }}
-          >
-            <a
-              href="/privacy"
-              style={{ color: theme.textMuted, textDecoration: 'none' }}
-            >
-              개인정보처리방침
-            </a>
-            <span>·</span>
-            <span>© 2025 CLP Studio. MADE BY ZERO</span>
-            <span>·</span>
-            <a
-              href="https://clp-site.vercel.app"
-              style={{ color: theme.textMuted, textDecoration: 'none' }}
-            >
-              clp-site.vercel.app
-            </a>
-          </div>
-        </div>
+
+        <Footer />
         {hoveredBox && <BoxTooltip box={hoveredBox} />}
-        {showAuth && (
-          <AuthModal
-            authMode={authMode}
-            email={email}
-            password={password}
-            authError={authError}
-            authLoading={authLoading}
-            setEmail={setEmail}
-            setPassword={setPassword}
-            setAuthMode={setAuthMode}
-            setAuthError={setAuthError}
-            setShowAuth={setShowAuth}
-            handleLogin={handleLogin}
-            handleSignup={handleSignup}
-          />
-        )}
-        {showRecords && (
-          <RecordsModal
-            records={records}
-            setShowRecords={setShowRecords}
-            loadRecord={loadRecord}
-            deleteRecord={deleteRecord}
-            duplicateRecord={duplicateRecord}
-            editingRecord={editingRecord}
-            setEditingRecord={setEditingRecord}
-            saveTitle={saveTitle}
-            setSaveTitle={setSaveTitle}
-            updateRecord={updateRecord}
-            saving={saving}
-            saveSuccess={saveSuccess}
-          />
-        )}
+        <Modals />
       </div>
     );
   }
@@ -2465,122 +2487,15 @@ export default function Home() {
         fontFamily: '-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
       }}
     >
-      {/* 네비게이션 */}
-      <nav
-        style={{
-          background: 'white',
-          borderBottom: `1px solid ${theme.border}`,
-          padding: '0 32px',
-          height: 64,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          position: 'sticky',
-          top: 0,
-          zIndex: 100,
-          boxShadow: '0 1px 0 rgba(0,0,0,0.05)',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div
-            style={{
-              width: 36,
-              height: 36,
-              background: 'linear-gradient(135deg,#44403c,#57534e)',
-              borderRadius: 10,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: 18,
-            }}
-          >
-            🚢
-          </div>
-          <span style={{ fontWeight: 800, fontSize: 16, color: theme.text }}>
-            CLP Studio
-          </span>
-        </div>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          {user ? (
-            <>
-              <span
-                style={{
-                  fontSize: 13,
-                  color: theme.textSecondary,
-                  background: theme.bg,
-                  padding: '6px 12px',
-                  borderRadius: 8,
-                }}
-              >
-                👤 {user.email?.replace('@clp.app', '')}
-              </span>
-              <button
-                onClick={loadRecords}
-                style={{
-                  padding: '8px 16px',
-                  borderRadius: 10,
-                  border: `1.5px solid ${theme.primary}`,
-                  background: theme.primaryLight,
-                  color: theme.primary,
-                  fontSize: 13,
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                  fontFamily: 'inherit',
-                }}
-              >
-                📋 내 기록
-              </button>
-              <button
-                onClick={handleLogout}
-                style={{
-                  padding: '8px 14px',
-                  borderRadius: 10,
-                  border: `1px solid ${theme.border}`,
-                  background: 'white',
-                  color: theme.textSecondary,
-                  fontSize: 13,
-                  cursor: 'pointer',
-                  fontFamily: 'inherit',
-                }}
-              >
-                로그아웃
-              </button>
-            </>
-          ) : (
-            <button
-              onClick={() => setShowAuth(true)}
-              style={{
-                padding: '8px 18px',
-                borderRadius: 10,
-                border: 'none',
-                background: 'linear-gradient(135deg,#44403c,#57534e)',
-                color: 'white',
-                fontSize: 13,
-                fontWeight: 700,
-                cursor: 'pointer',
-                fontFamily: 'inherit',
-              }}
-            >
-              🔐 로그인 / 회원가입
-            </button>
-          )}
-          <div
-            style={{
-              fontWeight: 800,
-              fontSize: 13,
-              color: theme.textMuted,
-              background: theme.bg,
-              padding: '6px 12px',
-              borderRadius: 8,
-            }}
-          >
-            MADE BY ZERO
-          </div>
-        </div>
-      </nav>
+      <Nav
+        user={user}
+        onLogin={() => setShowAuth(true)}
+        onLogout={handleLogout}
+        onRecords={loadRecords}
+      />
 
       <div style={{ maxWidth: 1000, margin: '0 auto', padding: '40px 24px' }}>
-        {/* 히어로 섹션 */}
+        {/* 히어로 */}
         <div style={{ textAlign: 'center', marginBottom: 48 }}>
           <div
             style={{
@@ -2588,15 +2503,16 @@ export default function Home() {
               alignItems: 'center',
               gap: 8,
               background: theme.primaryLight,
-              color: theme.primary,
+              color: theme.textSecondary,
               padding: '6px 16px',
               borderRadius: 20,
               fontSize: 12,
               fontWeight: 600,
               marginBottom: 16,
+              border: `1px solid ${theme.border}`,
             }}
           >
-            ✨ AI 기반 3D 컨테이너 최적화
+            ✦ 포워더를 위한 무료 CLP 툴
           </div>
           <h1
             style={{
@@ -2689,7 +2605,7 @@ export default function Home() {
           ))}
         </div>
 
-        {/* 화물 입력 섹션 */}
+        {/* 화물 입력 */}
         <div
           style={{
             background: 'white',
@@ -2724,7 +2640,6 @@ export default function Home() {
                 {totalWeight.toLocaleString()} kg
               </p>
             </div>
-            {/* 빠른 입력 */}
             <div style={{ display: 'flex', gap: 8 }}>
               <input
                 id="quickInput"
@@ -3013,38 +2928,8 @@ export default function Home() {
         </button>
       </div>
 
-      {showAuth && (
-        <AuthModal
-          authMode={authMode}
-          email={email}
-          password={password}
-          authError={authError}
-          authLoading={authLoading}
-          setEmail={setEmail}
-          setPassword={setPassword}
-          setAuthMode={setAuthMode}
-          setAuthError={setAuthError}
-          setShowAuth={setShowAuth}
-          handleLogin={handleLogin}
-          handleSignup={handleSignup}
-        />
-      )}
-      {showRecords && (
-        <RecordsModal
-          records={records}
-          setShowRecords={setShowRecords}
-          loadRecord={loadRecord}
-          deleteRecord={deleteRecord}
-          duplicateRecord={duplicateRecord}
-          editingRecord={editingRecord}
-          setEditingRecord={setEditingRecord}
-          saveTitle={saveTitle}
-          setSaveTitle={setSaveTitle}
-          updateRecord={updateRecord}
-          saving={saving}
-          saveSuccess={saveSuccess}
-        />
-      )}
+      <Footer />
+      <Modals />
     </div>
   );
 }
@@ -3052,7 +2937,7 @@ export default function Home() {
 const inputStyle: React.CSSProperties = {
   padding: '8px 10px',
   borderRadius: 8,
-  border: `1.5px solid #e2e8f0`,
+  border: `1.5px solid #e7e5e4`,
   fontSize: 13,
   width: 90,
   outline: 'none',

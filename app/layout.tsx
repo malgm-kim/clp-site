@@ -35,6 +35,35 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="ko">
       <head>
         <link rel="canonical" href="https://clp-site.vercel.app" />
+        {/* 구조화 데이터 */}
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              '@context': 'https://schema.org',
+              '@type': 'WebApplication',
+              name: 'CLP Studio',
+              url: 'https://clp-site.vercel.app',
+              description: '포워더를 위한 무료 CLP(Container Load Plan) 계산기. 3D 알고리즘으로 최적의 컨테이너 배치를 자동 계산.',
+              applicationCategory: 'BusinessApplication',
+              operatingSystem: 'Web',
+              offers: {
+                '@type': 'Offer',
+                price: '0',
+                priceCurrency: 'KRW',
+              },
+              featureList: [
+                '3D 컨테이너 적재 계산',
+                'CBM 자동 계산',
+                '20GP · 40HQ 자동 선택',
+                '상면도 · 측면도 시각화',
+                'CLP 저장 및 관리',
+              ],
+              inLanguage: 'ko',
+              isAccessibleForFree: true,
+            }),
+          }}
+        />
       </head>
       <body style={{ margin: 0, padding: 0 }}>{children}</body>
     </html>

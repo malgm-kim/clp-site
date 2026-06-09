@@ -190,7 +190,7 @@ function canPlace(
   }
   if (noStack && z > 0) return false;
   if (z === 0) return true;
-  if (calcSupportArea(boxes, x, y, z, l, w) < l * w * 0.1) return false;
+  if (calcSupportArea(boxes, x, y, z, l, w) < l * w * 0.05) return false;
   for (const b of boxes) {
     if (
       (b.noStack || b.noTopLoad) &&
@@ -389,6 +389,18 @@ const STRATEGIES = [
     [...b].sort((a, z) => {
       if (a.noStack !== z.noStack) return a.noStack ? -1 : 1;
       return Math.max(z.length, z.width) - Math.max(a.length, a.width);
+    }),
+  // 전략 6: 높이 낮은 것 먼저 (바닥을 넓게 깔기)
+  (b: CargoItem[]) =>
+    [...b].sort((a, z) => {
+      if (a.noStack !== z.noStack) return a.noStack ? -1 : 1;
+      return a.height - z.height;
+    }),
+  // 전략 7: 폭 큰 것 먼저
+  (b: CargoItem[]) =>
+    [...b].sort((a, z) => {
+      if (a.noStack !== z.noStack) return a.noStack ? -1 : 1;
+      return z.width - a.width;
     }),
 ];
 

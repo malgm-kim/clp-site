@@ -1,20 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(req: NextRequest) {
-  const { text } = await req.json();
+  try {
+    const { text } = await req.json();
 
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': process.env.ANTHROPIC_API_KEY!,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1000,
-      messages: [
-        {
+    if (!process.env.ANTHROPIC_API_KEY) {
+      return NextResponse.json({ error: 'API key missing', result: '[]' });
+    }
+
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        messages: [{
           role: 'user',
           content: `다음 텍스트에서 화물 정보를 추출해서 JSON 배열만 반환해. 다른 텍스트 절대 쓰지 마.
 
@@ -46,12 +50,17 @@ export async function POST(req: NextRequest) {
 입력: ${text}
 
 출력 예시: [{"length":50,"width":50,"height":50,"quantity":1,"name":"","noStack":false,"noTopLoad":false,"stackGroup":""}]`,
-        },
-      ],
-    }),
-  });
+        }],
+      }),
+    });
 
-  const data = await response.json();
-  const content = data.content?.[0]?.text || '[]';
-  return NextResponse.json({ result: content });
+    const data = await response.json();
+    console.log('Anthropic 응답:', JSON.stringify(data));
+    const content = data.content?.[0]?.text || '[]';
+    return NextResponse.json({ result: content });
+
+  } catch (err) {
+    console.error('route.ts 에러:', err);
+    return NextResponse.json({ error: String(err), result: '[]' });
+  }
 }

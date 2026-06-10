@@ -1453,28 +1453,44 @@ export default function Home() {
       );
     };
     try {
-      const response = await fetch('/api/parse', {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: quickInput }),
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1000,
+          messages: [
+            {
+              role: 'user',
+              content: `다음 텍스트에서 화물 치수 정보를 추출해서 JSON 배열만 반환해. 다른 텍스트 절대 쓰지 마.
+
+파싱 규칙:
+- W=폭(width), L=길이(length), H=높이(height) 레이블이 있으면 그에 맞게 매핑
+- 쉼표가 포함된 숫자는 천단위 구분자임 (예: 1,100 → 1100)
+- Pallet, Pallets, EA, BOX, 박스, 개 등은 수량 단위로 인식
+- KG, 중량, 적재 관련 텍스트 무시
+
+단위 변환 규칙:
+- 숫자가 모두 1000 이상이면 MM → ÷10 해서 CM으로
+- 숫자 중 하나라도 소수점이 있으면 M → ×100 해서 CM으로
+- 숫자가 100~999 사이면 MM일 가능성 높음 → 실제 물류 박스 크기 기준으로 판단
+  (예: 805*920*970 → 실제 박스가 8m×9m×9m일 수 없으므로 MM → 80.5×92×97 CM)
+  (예: 120*80*100 → 일반적인 박스 크기이므로 CM 그대로)
+- 박스 크기가 비현실적으로 크면 (한 변이 300cm 이상) MM으로 재판단
+- 수량 없으면 1
+- 키: length, width, height, quantity
+
+입력: ${quickInput}
+
+출력 예시: [{"length":110,"width":110,"height":93,"quantity":3}]`,
+            },
+          ],
+        }),
       });
       const data = await response.json();
-      const text = data.result || '[]';
-      console.log('AI 응답:', text);
-
-      // ✅ 컨테이너 물리적 한계 초과 시 강제 MM→CM 변환
-      const raw = JSON.parse(text.replace(/```json|```/g, '').trim());
-      const fixed = raw.map((p: any) => {
-        let { length: l, width: w, height: h } = p;
-        if (l > 235 || w > 235 || h > 235) {
-          l = Math.round(l / 10);
-          w = Math.round(w / 10);
-          h = Math.round(h / 10);
-        }
-        return { ...p, length: l, width: w, height: h };
-      });
-    } catch (err) {
-      console.error('API 에러:', err);
+      const text = data.content?.[0]?.text || '[]';
+      applyItems(JSON.parse(text.replace(/```json|```/g, '').trim()));
+    } catch {
       applyItems(parseQuickInput(quickInput));
     } finally {
       setQuickAddLoading(false);

@@ -2971,22 +2971,40 @@ export default function Home() {
               borderTop: `1px solid ${theme.border}`,
             }}
           >
-            <button
-              onClick={addCargo}
-              style={{
-                padding: '8px 16px',
-                borderRadius: 10,
-                border: `1.5px dashed ${theme.border}`,
-                background: 'white',
-                color: theme.textSecondary,
-                fontWeight: 600,
-                fontSize: 13,
-                cursor: 'pointer',
-                fontFamily: 'inherit',
-              }}
-            >
-              + 품목 추가
-            </button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={addCargo}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: 10,
+                  border: `1.5px dashed ${theme.border}`,
+                  background: 'white',
+                  color: theme.textSecondary,
+                  fontWeight: 600,
+                  fontSize: 13,
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                }}
+              >
+                + 품목 추가
+              </button>
+              <button
+                onClick={() => setCargos([])}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: 10,
+                  border: `1.5px solid ${theme.danger}`,
+                  background: '#fef2f2',
+                  color: theme.danger,
+                  fontWeight: 600,
+                  fontSize: 13,
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                }}
+              >
+                🗑️ 전체 삭제
+              </button>
+            </div>
             <div style={{ fontSize: 12, color: theme.textMuted }}>
               💡 다단불가: 바닥에만 배치 &nbsp;|&nbsp; 상단적재: 최상단 배치
               &nbsp;|&nbsp; 자체다단: 같은 값끼리만 쌓기

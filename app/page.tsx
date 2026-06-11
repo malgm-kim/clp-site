@@ -1395,7 +1395,117 @@ export default function Home() {
     });
     await loadRecords();
   };
+  const handleExcelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const XLSX = await import('xlsx');
+    const buffer = await file.arrayBuffer();
+    const wb = XLSX.read(buffer, { type: 'array' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
 
+    // 헤더 행 찾기 (Actual Customer가 있는 행)
+    let headerIdx = -1;
+    let colMap: Record<string, number> = {};
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowStr = row.map((c) => String(c ?? ''));
+      const acIdx = rowStr.findIndex((c) => c.includes('Actual Customer'));
+      if (acIdx !== -1) {
+        headerIdx = i;
+        rowStr.forEach((c, j) => {
+          if (c.includes('Actual Customer')) colMap['customer'] = j;
+          if (c.includes('Qty')) colMap['qty'] = colMap['qty'] ?? j;
+          if (c.includes('Weigh') || c.includes('Weight'))
+            colMap['weight'] = colMap['weight'] ?? j;
+          if (c.includes('Dimension')) colMap['dimension'] = j;
+          if (c.includes('Remark')) colMap['remark'] = j;
+        });
+        break;
+      }
+    }
+
+    if (headerIdx === -1) {
+      alert('헤더를 찾을 수 없어요. 엑셀 형식을 확인해주세요.');
+      return;
+    }
+
+    // 사이즈 파싱 함수
+    const parseDimension = (
+      str: string
+    ): { l: number; w: number; h: number; qty: number }[] => {
+      if (!str) return [];
+      const results: { l: number; w: number; h: number; qty: number }[] = [];
+      // 패턴: 숫자x숫자x숫자(숫자) 또는 숫자*숫자*숫자(숫자)
+      const pattern = /(\d+)[xX*×](\d+)[xX*×](\d+)(?:\((\d+)\))?/g;
+      let match;
+      while ((match = pattern.exec(str)) !== null) {
+        results.push({
+          l: +match[1],
+          w: +match[2],
+          h: +match[3],
+          qty: match[4] ? +match[4] : 0,
+        });
+      }
+      return results;
+    };
+
+    const newItems: CargoItem[] = [];
+    const groupId = Date.now();
+
+    for (let i = headerIdx + 1; i < rows.length; i++) {
+      const row = rows[i];
+      if (!row || row.length === 0) continue;
+
+      const customer = String(row[colMap['customer']] ?? '').trim();
+      if (!customer) continue;
+
+      const bookingQty = Number(row[colMap['qty']] ?? 0) || 1;
+      const totalWeight = Number(row[colMap['weight']] ?? 0) || 0;
+      const perWeight = totalWeight / bookingQty;
+
+      const dimStr = String(row[colMap['dimension']] ?? '').trim();
+      const remarkStr = String(row[colMap['remark']] ?? '').trim();
+      const parseStr = dimStr || remarkStr;
+
+      const dims = parseDimension(parseStr);
+
+      if (dims.length === 0) continue;
+
+      for (const dim of dims) {
+        const qty = dim.qty > 0 ? dim.qty : bookingQty;
+        newItems.push({
+          ...EMPTY_CARGO(),
+          name: customer,
+          length: dim.l,
+          width: dim.w,
+          height: dim.h,
+          weight: Math.round(perWeight * 10) / 10,
+          quantity: qty,
+          groupId,
+          highlighted: true,
+        });
+      }
+    }
+
+    if (!newItems.length) {
+      alert('파싱된 화물 정보가 없어요.');
+      return;
+    }
+
+    setCargos((prev) => [
+      ...prev.map((c) => ({ ...c, highlighted: false })),
+      ...newItems,
+    ]);
+    setTimeout(
+      () =>
+        setCargos((prev) => prev.map((c) => ({ ...c, highlighted: false }))),
+      3000
+    );
+
+    // 파일 input 초기화 (같은 파일 재업로드 가능하게)
+    e.target.value = '';
+  };
   const handleReset = () => {
     setCargos([{ ...EMPTY_CARGO(), id: 1 }]);
     setContainerLoads([]);
@@ -2555,7 +2665,7 @@ export default function Home() {
         onLogout={handleLogout}
         onRecords={loadRecords}
       />
-      <div style={{ maxWidth: 1000, margin: '0 auto', padding: '40px 24px' }}>
+      <div style={{ maxWidth: 1600, margin: '0 auto', padding: '40px 24px' }}>
         <div style={{ textAlign: 'center', marginBottom: 48 }}>
           <div
             style={{
@@ -2700,6 +2810,30 @@ export default function Home() {
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <input
+                type="file"
+                accept=".xlsx,.xls"
+                id="excelUpload"
+                style={{ display: 'none' }}
+                onChange={handleExcelUpload}
+              />
+              <button
+                onClick={() => document.getElementById('excelUpload')?.click()}
+                style={{
+                  padding: '9px 16px',
+                  background: 'white',
+                  color: theme.success,
+                  border: `1.5px solid ${theme.success}`,
+                  borderRadius: 10,
+                  cursor: 'pointer',
+                  fontWeight: 700,
+                  fontSize: 13,
+                  fontFamily: 'inherit',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                📊 엑셀 업로드
+              </button>
+              <input
                 id="quickInput"
                 name="quickInput"
                 value={quickInput}
@@ -2765,7 +2899,7 @@ export default function Home() {
                     <th
                       key={h}
                       style={{
-                        padding: '10px 12px',
+                        padding: '10px 8px',
                         textAlign: 'left',
                         color: theme.textMuted,
                         fontWeight: 600,
@@ -2796,7 +2930,7 @@ export default function Home() {
                       transition: 'background 0.5s ease, box-shadow 0.5s ease',
                     }}
                   >
-                    <td style={{ padding: '10px 12px' }}>
+                    <td style={{ padding: '8px 8px' }}>
                       <div
                         style={{
                           display: 'flex',
@@ -2821,7 +2955,7 @@ export default function Home() {
                             updateCargo(c.id, 'name', e.target.value)
                           }
                           placeholder="품명"
-                          style={{ ...inputStyle, width: 80 }}
+                          style={{ ...inputStyle, width: 70 }}
                         />
                       </div>
                     </td>
@@ -2843,7 +2977,7 @@ export default function Home() {
                           onChange={(e) =>
                             updateCargo(c.id, field, Number(e.target.value))
                           }
-                          style={{ ...inputStyle, width: 65 }}
+                          style={{ ...inputStyle, width: 58 }}
                         />
                       </td>
                     ))}
@@ -2929,7 +3063,7 @@ export default function Home() {
                         title="같은 값끼리만 쌓기 가능"
                         style={{
                           ...inputStyle,
-                          width: 44,
+                          width: 36,
                           textAlign: 'center',
                         }}
                       />

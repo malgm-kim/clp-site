@@ -1486,6 +1486,7 @@ export default function Home() {
 
       const dims = parseDimension(parseStr);
       if (dims.length === 0) {
+        console.log('파싱 실패 행:', customer, parseStr);
         // 파싱 실패 → 품명만 입력, 빨간 하이라이트
         newItems.push({
           ...EMPTY_CARGO(),
@@ -1521,6 +1522,10 @@ export default function Home() {
       }
     }
 
+    console.log(
+      'newItems:',
+      newItems.map((i) => ({ name: i.name, parseError: i.parseError }))
+    );
     if (!newItems.length) {
       alert('파싱된 화물 정보가 없어요.');
       return;
@@ -2968,7 +2973,7 @@ export default function Home() {
                     style={{
                       borderBottom: `1px solid ${theme.border}`,
                       background: c.parseError
-                        ? 'rgba(159,75,75,0.12)'
+                        ? '#fef2f2'
                         : c.highlighted
                         ? 'rgba(77,124,96,0.07)'
                         : 'transparent',
@@ -2977,7 +2982,9 @@ export default function Home() {
                         : c.highlighted
                         ? `inset 3px 0 0 ${theme.success}`
                         : 'none',
-                      transition: 'background 0.5s ease, box-shadow 0.5s ease',
+                      transition: c.parseError
+                        ? 'none'
+                        : 'background 0.5s ease, box-shadow 0.5s ease',
                     }}
                   >
                     <td style={{ padding: '8px 8px' }}>

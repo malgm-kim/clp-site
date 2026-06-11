@@ -1439,7 +1439,7 @@ export default function Home() {
       if (!str) return [];
       const results: { l: number; w: number; h: number; qty: number }[] = [];
       const pattern =
-        /(\d+(?:\.\d+)?)[xX*×]\s*(\d+(?:\.\d+)?)[xX*×]\s*(\d+(?:\.\d+)?)(?:[xX*×]\s*(\d+(?:\.\d+)?))?(?:\s*\([^)]*\))?(?:\((\d+)\))?/g;
+        /(\d+(?:\.\d+)?)[xX*×]\s*(\d+(?:\.\d+)?)[xX*×]\s*(\d+(?:\.\d+)?)(?:\s*[*×xX]\s*(\d+))?(?:\s*\((\d+)\))?/g;
       let match;
       while ((match = pattern.exec(str)) !== null) {
         let l = +match[1],
@@ -1462,7 +1462,9 @@ export default function Home() {
           w = Math.round(w / 10);
           h = Math.round(h / 10);
         }
-        results.push({ l, w, h, qty: match[5] ? +match[5] : 0 });
+        // match[4]: *숫자 형식 수량, match[5]: (숫자) 형식 수량
+        const qty = match[5] ? +match[5] : match[4] ? +match[4] : 0;
+        results.push({ l, w, h, qty });
       }
       return results;
     };
@@ -1606,6 +1608,7 @@ export default function Home() {
         ...prev.map((c) => ({ ...c, highlighted: false })),
         ...newItems,
       ]);
+      setQuickInput('');
       setTimeout(
         () =>
           setCargos((prev) => prev.map((c) => ({ ...c, highlighted: false }))),
@@ -1655,6 +1658,7 @@ export default function Home() {
       applyItems(parseQuickInput(quickInput));
     } finally {
       setQuickAddLoading(false);
+      setQuickInput('');
     }
   };
 
@@ -2391,6 +2395,96 @@ export default function Home() {
                   💡 박스 위에 마우스를 올리면 상세 정보 · NO: 완전다단불가 ·
                   NT: 상단적재(최상단) · 보라색: 자체다단 그룹
                 </div>
+
+                {/* 이 컨테이너에 담긴 화물 목록 */}
+                <div
+                  style={{
+                    marginTop: 16,
+                    borderTop: `1px solid ${theme.border}`,
+                    paddingTop: 16,
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 700,
+                      color: theme.textSecondary,
+                      marginBottom: 10,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.5px',
+                    }}
+                  >
+                    이 컨테이너에 담긴 화물
+                  </div>
+                  <div
+                    style={{ display: 'flex', flexDirection: 'column', gap: 4 }}
+                  >
+                    {(() => {
+                      const grouped: Record<
+                        string,
+                        {
+                          name: string;
+                          color: string;
+                          dims: string;
+                          count: number;
+                        }
+                      > = {};
+                      for (const box of load.boxes) {
+                        const key = `${box.cargoName}_${box.l}x${box.w}x${box.h}`;
+                        if (!grouped[key]) {
+                          grouped[key] = {
+                            name: box.cargoName || '(미입력)',
+                            color: box.color,
+                            dims: `${box.l}×${box.w}×${box.h}`,
+                            count: 0,
+                          };
+                        }
+                        grouped[key].count += 1;
+                      }
+                      return Object.values(grouped).map((item, i) => (
+                        <div
+                          key={i}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 10,
+                            padding: '6px 12px',
+                            background: theme.bg,
+                            borderRadius: 8,
+                            fontSize: 13,
+                          }}
+                        >
+                          <div
+                            style={{
+                              width: 10,
+                              height: 10,
+                              borderRadius: 3,
+                              background: item.color,
+                              flexShrink: 0,
+                            }}
+                          />
+                          <span style={{ fontWeight: 600, color: theme.text }}>
+                            {item.name}
+                          </span>
+                          <span
+                            style={{ color: theme.textMuted, fontSize: 12 }}
+                          >
+                            {item.dims}cm
+                          </span>
+                          <span
+                            style={{
+                              marginLeft: 'auto',
+                              fontWeight: 700,
+                              color: theme.primary,
+                            }}
+                          >
+                            {item.count}개
+                          </span>
+                        </div>
+                      ));
+                    })()}
+                  </div>
+                </div>
               </div>
             );
           })}
@@ -2458,6 +2552,152 @@ export default function Home() {
               border: `1px solid ${theme.border}`,
             }}
           >
+            {/* 컨테이너별 화물 목록 */}
+            <div
+              style={{
+                background: 'white',
+                borderRadius: 16,
+                padding: 24,
+                marginBottom: 24,
+                boxShadow: theme.shadow,
+                border: `1px solid ${theme.border}`,
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 13,
+                  fontWeight: 700,
+                  color: theme.text,
+                  marginBottom: 16,
+                }}
+              >
+                컨테이너별 화물 목록
+              </div>
+              {containerLoads.map((load, ci) => {
+                const ct = load.containerType;
+                // 박스를 cargoId 기준으로 그룹핑
+                const grouped: Record<
+                  string,
+                  { name: string; color: string; dims: string; count: number }
+                > = {};
+                for (const box of load.boxes) {
+                  const key = `${box.cargoName}_${box.l}x${box.w}x${box.h}`;
+                  if (!grouped[key]) {
+                    grouped[key] = {
+                      name: box.cargoName || '(미입력)',
+                      color: box.color,
+                      dims: `${box.l}×${box.w}×${box.h}`,
+                      count: 0,
+                    };
+                  }
+                  grouped[key].count += 1;
+                }
+                return (
+                  <div
+                    key={load.containerId}
+                    style={{
+                      marginBottom: ci < containerLoads.length - 1 ? 20 : 0,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        marginBottom: 10,
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontWeight: 700,
+                          fontSize: 14,
+                          color: theme.text,
+                        }}
+                      >
+                        컨테이너 {ci + 1}
+                      </span>
+                      <span
+                        style={{
+                          background: theme.primaryLight,
+                          color: theme.primary,
+                          fontSize: 12,
+                          fontWeight: 700,
+                          padding: '3px 10px',
+                          borderRadius: 20,
+                          border: `1px solid ${theme.border}`,
+                        }}
+                      >
+                        {ct.name}
+                      </span>
+                      <span style={{ fontSize: 12, color: theme.textMuted }}>
+                        {load.boxes.length}박스
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 4,
+                      }}
+                    >
+                      {Object.values(grouped).map((item, i) => (
+                        <div
+                          key={i}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 10,
+                            padding: '6px 12px',
+                            background: theme.bg,
+                            borderRadius: 8,
+                            fontSize: 13,
+                          }}
+                        >
+                          <div
+                            style={{
+                              width: 10,
+                              height: 10,
+                              borderRadius: 3,
+                              background: item.color,
+                              flexShrink: 0,
+                            }}
+                          />
+                          <span
+                            style={{
+                              fontWeight: 600,
+                              color: theme.text,
+                              minWidth: 120,
+                            }}
+                          >
+                            {item.name}
+                          </span>
+                          <span style={{ color: theme.textMuted }}>
+                            {item.dims}cm
+                          </span>
+                          <span
+                            style={{
+                              marginLeft: 'auto',
+                              fontWeight: 700,
+                              color: theme.primary,
+                            }}
+                          >
+                            {item.count}개
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    {ci < containerLoads.length - 1 && (
+                      <div
+                        style={{
+                          borderTop: `1px solid ${theme.border}`,
+                          marginTop: 16,
+                        }}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
             <div
               style={{
                 fontSize: 13,
@@ -2841,6 +3081,12 @@ export default function Home() {
               alignItems: 'center',
               justifyContent: 'space-between',
               marginBottom: 20,
+              position: 'sticky',
+              top: 64,
+              background: 'white',
+              zIndex: 10,
+              padding: '12px 0',
+              margin: '-12px 0 20px 0',
             }}
           >
             <div>

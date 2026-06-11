@@ -35,6 +35,7 @@ type CargoItem = {
   stackGroup?: string; // 자체다단: 같은 값끼리만 쌓기 가능
   groupId?: number;
   highlighted?: boolean;
+  parseError?: boolean;
 };
 
 type PlacedBox3D = {
@@ -1404,48 +1405,64 @@ export default function Home() {
     const ws = wb.Sheets[wb.SheetNames[0]];
     const rows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
 
-    // 헤더 행 찾기 (Actual Customer가 있는 행)
     let headerIdx = -1;
     let colMap: Record<string, number> = {};
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
-      const rowStr = row.map((c) => String(c ?? ''));
-      const acIdx = rowStr.findIndex((c) => c.includes('Actual Customer'));
-      if (acIdx !== -1) {
+      if (!row) continue;
+      const rowStr = row.map((c: any) => String(c ?? '').trim());
+      if (rowStr.some((c: string) => c === 'Actual Customer')) {
         headerIdx = i;
-        rowStr.forEach((c, j) => {
-          if (c.includes('Actual Customer')) colMap['customer'] = j;
-          if (c.includes('Qty')) colMap['qty'] = colMap['qty'] ?? j;
-          if (c.includes('Weigh') || c.includes('Weight'))
-            colMap['weight'] = colMap['weight'] ?? j;
-          if (c.includes('Dimension')) colMap['dimension'] = j;
-          if (c.includes('Remark')) colMap['remark'] = j;
+        rowStr.forEach((c: string, j: number) => {
+          if (c === 'Actual Customer') colMap['customer'] = j;
+          if (c === 'Qty' && colMap['qty'] === undefined) colMap['qty'] = j;
+          if (
+            (c === 'Weigth' || c === 'Weight') &&
+            colMap['weight'] === undefined
+          )
+            colMap['weight'] = j;
+          if (c === 'Dimension') colMap['dimension'] = j;
+          if (c === 'Remark') colMap['remark'] = j;
         });
         break;
       }
     }
 
     if (headerIdx === -1) {
-      alert('헤더를 찾을 수 없어요. 엑셀 형식을 확인해주세요.');
+      alert('헤더를 찾을 수 없어요.');
       return;
     }
 
-    // 사이즈 파싱 함수
     const parseDimension = (
       str: string
     ): { l: number; w: number; h: number; qty: number }[] => {
       if (!str) return [];
       const results: { l: number; w: number; h: number; qty: number }[] = [];
-      // 패턴: 숫자x숫자x숫자(숫자) 또는 숫자*숫자*숫자(숫자)
-      const pattern = /(\d+)[xX*×](\d+)[xX*×](\d+)(?:\((\d+)\))?/g;
+      const pattern =
+        /(\d+(?:\.\d+)?)[xX*×]\s*(\d+(?:\.\d+)?)[xX*×]\s*(\d+(?:\.\d+)?)(?:[xX*×]\s*(\d+(?:\.\d+)?))?(?:\s*\([^)]*\))?(?:\((\d+)\))?/g;
       let match;
       while ((match = pattern.exec(str)) !== null) {
-        results.push({
-          l: +match[1],
-          w: +match[2],
-          h: +match[3],
-          qty: match[4] ? +match[4] : 0,
-        });
+        let l = +match[1],
+          w = +match[2],
+          h = +match[3];
+        // 소수점 있으면 M → CM 변환
+        if (
+          match[1].includes('.') ||
+          match[2].includes('.') ||
+          match[3].includes('.')
+        ) {
+          l = Math.round(l * 100);
+          w = Math.round(w * 100);
+          h = Math.round(h * 100);
+        }
+        // CBM이 100 초과면 MM → CM 변환
+        const cbm = (l / 100) * (w / 100) * (h / 100);
+        if (cbm > 100) {
+          l = Math.round(l / 10);
+          w = Math.round(w / 10);
+          h = Math.round(h / 10);
+        }
+        results.push({ l, w, h, qty: match[5] ? +match[5] : 0 });
       }
       return results;
     };
@@ -1456,31 +1473,47 @@ export default function Home() {
     for (let i = headerIdx + 1; i < rows.length; i++) {
       const row = rows[i];
       if (!row || row.length === 0) continue;
-
       const customer = String(row[colMap['customer']] ?? '').trim();
       if (!customer) continue;
 
       const bookingQty = Number(row[colMap['qty']] ?? 0) || 1;
       const totalWeight = Number(row[colMap['weight']] ?? 0) || 0;
-      const perWeight = totalWeight / bookingQty;
+      const perWeight = Math.round((totalWeight / bookingQty) * 10) / 10;
 
       const dimStr = String(row[colMap['dimension']] ?? '').trim();
       const remarkStr = String(row[colMap['remark']] ?? '').trim();
       const parseStr = dimStr || remarkStr;
 
       const dims = parseDimension(parseStr);
+      if (dims.length === 0) {
+        // 파싱 실패 → 품명만 입력, 빨간 하이라이트
+        newItems.push({
+          ...EMPTY_CARGO(),
+          name: customer,
+          weight: perWeight,
+          quantity: bookingQty,
+          groupId,
+          highlighted: true,
+          parseError: true,
+        });
+        continue;
+      }
 
-      if (dims.length === 0) continue;
+      // (n) 없는 경우: 총 수량을 사이즈 개수로 균등 배분
+      const totalDimQty = dims.reduce((s, d) => s + d.qty, 0);
+      const noQtyCount = dims.filter((d) => d.qty === 0).length;
+      const remainQty = bookingQty - totalDimQty;
+      const perDimQty = noQtyCount > 0 ? Math.round(remainQty / noQtyCount) : 0;
 
       for (const dim of dims) {
-        const qty = dim.qty > 0 ? dim.qty : bookingQty;
+        const qty = dim.qty > 0 ? dim.qty : perDimQty || 1;
         newItems.push({
           ...EMPTY_CARGO(),
           name: customer,
           length: dim.l,
           width: dim.w,
           height: dim.h,
-          weight: Math.round(perWeight * 10) / 10,
+          weight: perWeight,
           quantity: qty,
           groupId,
           highlighted: true,
@@ -1492,7 +1525,6 @@ export default function Home() {
       alert('파싱된 화물 정보가 없어요.');
       return;
     }
-
     setCargos((prev) => [
       ...prev.map((c) => ({ ...c, highlighted: false })),
       ...newItems,
@@ -1502,10 +1534,9 @@ export default function Home() {
         setCargos((prev) => prev.map((c) => ({ ...c, highlighted: false }))),
       3000
     );
-
-    // 파일 input 초기화 (같은 파일 재업로드 가능하게)
     e.target.value = '';
   };
+
   const handleReset = () => {
     setCargos([{ ...EMPTY_CARGO(), id: 1 }]);
     setContainerLoads([]);
@@ -1519,7 +1550,22 @@ export default function Home() {
     setCargos((prev) => prev.filter((c) => c.id !== id));
   const updateCargo = (id: number, field: keyof CargoItem, value: any) =>
     setCargos((prev) =>
-      prev.map((c) => (c.id === id ? { ...c, [field]: value } : c))
+      prev.map((c) => {
+        if (c.id !== id) return c;
+        const updated = { ...c, [field]: value };
+        // 파싱 에러 행에서 길이/폭/높이 모두 입력되면 빨간 하이라이트 해제
+        if (
+          updated.parseError &&
+          updated.length > 0 &&
+          updated.width > 0 &&
+          updated.height > 0 &&
+          updated.weight > 0 &&
+          updated.quantity > 0
+        ) {
+          updated.parseError = false;
+        }
+        return updated;
+      })
     );
   const calcCbm = (c: CargoItem) =>
     (c.length / 100) * (c.width / 100) * (c.height / 100) * c.quantity;
@@ -1555,12 +1601,12 @@ export default function Home() {
         ...prev.map((c) => ({ ...c, highlighted: false })),
         ...newItems,
       ]);
-      setQuickInput('');
       setTimeout(
         () =>
           setCargos((prev) => prev.map((c) => ({ ...c, highlighted: false }))),
         3000
       );
+      // parseError는 setTimeout으로 해제하지 않음 (사용자가 직접 입력해야 해제)
     };
     try {
       const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -2921,10 +2967,14 @@ export default function Home() {
                     key={c.id}
                     style={{
                       borderBottom: `1px solid ${theme.border}`,
-                      background: c.highlighted
+                      background: c.parseError
+                        ? 'rgba(159,75,75,0.12)'
+                        : c.highlighted
                         ? 'rgba(77,124,96,0.07)'
                         : 'transparent',
-                      boxShadow: c.highlighted
+                      boxShadow: c.parseError
+                        ? `inset 3px 0 0 ${theme.danger}`
+                        : c.highlighted
                         ? `inset 3px 0 0 ${theme.success}`
                         : 'none',
                       transition: 'background 0.5s ease, box-shadow 0.5s ease',

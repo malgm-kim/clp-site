@@ -3087,9 +3087,10 @@ export default function Home() {
               zIndex: 10,
               padding: '12px 0',
               margin: '-12px 0 20px 0',
+              pointerEvents: 'none',
             }}
           >
-            <div>
+            <div style={{ pointerEvents: 'auto' }}>
               <h2
                 style={{
                   fontSize: 18,
@@ -3105,7 +3106,7 @@ export default function Home() {
                 {totalWeight.toLocaleString()} kg
               </p>
             </div>
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 8, pointerEvents: 'auto' }}>
               <input
                 type="file"
                 accept=".xlsx,.xls"
